@@ -39,6 +39,13 @@ type GenerateContentRequest struct {
 	//
 	// https://github.com/googleapis/go-genai/blob/6a8184fcaf8bf15f0c566616a7b356560309be9b/types.go#L1057
 	SafetySettings []*genai.SafetySetting `json:"safetySettings,omitempty"`
+
+	// Model is an AI Gateway internal field extracted from the request path (e.g.
+	// /v1beta/models/{model}:generateContent). It is never serialised to JSON.
+	Model string `json:"-"`
+	// Stream is an AI Gateway internal field set when the request path ends with
+	// :streamGenerateContent. It is never serialised to JSON.
+	Stream bool `json:"-"`
 }
 
 // https://docs.cloud.google.com/vertex-ai/generative-ai/docs/model-reference/text-embeddings-api#syntax

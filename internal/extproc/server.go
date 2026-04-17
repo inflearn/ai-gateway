@@ -51,6 +51,16 @@ func loggerFromContext(ctx context.Context) *slog.Logger {
 	return nil
 }
 
+// prefixEntry holds a registered prefix-based processor factory together with an
+// optional path-info extractor that injects synthetic headers (e.g. model name,
+// stream flag) derived from the request path into the headers map before the
+// factory is called.
+type prefixEntry struct {
+	prefix      string
+	factory     ProcessorFactory
+	pathExtract func(path string) map[string]string
+}
+
 // Server implements the external processor server.
 type Server struct {
 	logger                        *slog.Logger
@@ -58,6 +68,7 @@ type Server struct {
 	enableRedaction               bool
 	config                        *filterapi.RuntimeConfig
 	processorFactories            map[string]ProcessorFactory
+	prefixFactories               []prefixEntry
 	routerProcessorsPerReqID      map[string]Processor
 	routerProcessorsPerReqIDMutex sync.RWMutex
 	uuidFn                        func() string
@@ -87,16 +98,29 @@ func (s *Server) LoadConfig(ctx context.Context, config *filterapi.Config) error
 	return nil
 }
 
-// Register a new processor for the given request path.
+// Register a new processor for the given request path (exact match).
 func (s *Server) Register(path string, newProcessor ProcessorFactory) {
 	s.logger.Info("Registering processor", slog.String("path", path))
 	s.processorFactories[path] = newProcessor
 }
 
+// RegisterPrefix registers a processor factory for all request paths that start
+// with the given prefix.  pathExtract is called with the full path to produce
+// synthetic headers (e.g. "x-aigw-path-model") that are injected into the
+// request headers map before the factory is invoked.  pathExtract may be nil.
+func (s *Server) RegisterPrefix(prefix string, newProcessor ProcessorFactory, pathExtract func(string) map[string]string) {
+	s.logger.Info("Registering prefix processor", slog.String("prefix", prefix))
+	s.prefixFactories = append(s.prefixFactories, prefixEntry{
+		prefix:      prefix,
+		factory:     newProcessor,
+		pathExtract: pathExtract,
+	})
+}
+
 var errNoProcessor = errors.New("no processor registered for the given path")
 
 // processorForPath returns the processor for the given path.
-// Only exact path matching is supported currently.
+// Exact path matching is tried first; prefix matching is used as a fallback.
 func (s *Server) processorForPath(requestHeaders map[string]string, isUpstreamFilter bool, logger *slog.Logger) (Processor, error) {
 	pathHeader := ":path"
 	if isUpstreamFilter {
@@ -109,11 +133,24 @@ func (s *Server) processorForPath(requestHeaders map[string]string, isUpstreamFi
 		path = path[:queryIndex]
 	}
 
-	newProcessor, ok := s.processorFactories[path]
-	if !ok {
-		return nil, fmt.Errorf("%w: %s", errNoProcessor, path)
+	// 1. Exact match.
+	if newProcessor, ok := s.processorFactories[path]; ok {
+		return newProcessor(s.config, requestHeaders, logger, isUpstreamFilter, s.enableRedaction)
 	}
-	return newProcessor(s.config, requestHeaders, logger, isUpstreamFilter, s.enableRedaction)
+
+	// 2. Prefix match (first registered prefix wins).
+	for _, entry := range s.prefixFactories {
+		if strings.HasPrefix(path, entry.prefix) {
+			if entry.pathExtract != nil {
+				for k, v := range entry.pathExtract(path) {
+					requestHeaders[k] = v
+				}
+			}
+			return entry.factory(s.config, requestHeaders, logger, isUpstreamFilter, s.enableRedaction)
+		}
+	}
+
+	return nil, fmt.Errorf("%w: %s", errNoProcessor, path)
 }
 
 // originalPathHeader is the header used to pass the original path to the processor.

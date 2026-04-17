@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -956,4 +957,113 @@ func TestServer_ProcessorForPath_QueryParameterStripping(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestServer_RegisterPrefix_PrefixMatching(t *testing.T) {
+	s, err := NewServer(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})), false)
+	require.NoError(t, err)
+	require.NotNil(t, s)
+
+	s.config = &filterapi.RuntimeConfig{}
+
+	exactProc := &mockProcessor{}
+	s.Register("/v1/chat/completions", func(*filterapi.RuntimeConfig, map[string]string, *slog.Logger, bool, bool) (Processor, error) {
+		return exactProc, nil
+	})
+
+	prefixProc := &mockProcessor{}
+	s.RegisterPrefix("/v1beta/models/", func(*filterapi.RuntimeConfig, map[string]string, *slog.Logger, bool, bool) (Processor, error) {
+		return prefixProc, nil
+	}, func(path string) map[string]string {
+		const seg = "/models/"
+		idx := strings.LastIndex(path, seg)
+		if idx == -1 {
+			return nil
+		}
+		after := path[idx+len(seg):]
+		if colon := strings.Index(after, ":"); colon != -1 {
+			after = after[:colon]
+		}
+		return map[string]string{"x-aigw-path-model": after}
+	})
+
+	tests := []struct {
+		name         string
+		path         string
+		expectProc   Processor
+		expectErr    bool
+		expectErrMsg string
+	}{
+		{
+			name:       "exact match still works",
+			path:       "/v1/chat/completions",
+			expectProc: exactProc,
+		},
+		{
+			name:       "prefix match",
+			path:       "/v1beta/models/gemini-2.0-flash:generateContent",
+			expectProc: prefixProc,
+		},
+		{
+			name:       "prefix match with query params",
+			path:       "/v1beta/models/gemini-2.0-flash:generateContent?alt=sse",
+			expectProc: prefixProc,
+		},
+		{
+			name:         "no match returns error",
+			path:         "/unknown/path",
+			expectErr:    true,
+			expectErrMsg: "no processor registered for the given path: /unknown/path",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			headers := map[string]string{":path": tt.path}
+			proc, err := s.processorForPath(headers, false, slog.Default())
+			if tt.expectErr {
+				require.Error(t, err)
+				if tt.expectErrMsg != "" {
+					require.Contains(t, err.Error(), tt.expectErrMsg)
+				}
+				require.Nil(t, proc)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.expectProc, proc)
+			}
+		})
+	}
+}
+
+func TestServer_RegisterPrefix_SyntheticHeadersInjected(t *testing.T) {
+	s, err := NewServer(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})), false)
+	require.NoError(t, err)
+	require.NotNil(t, s)
+
+	s.config = &filterapi.RuntimeConfig{}
+
+	var capturedHeaders map[string]string
+	s.RegisterPrefix("/v1beta/models/", func(_ *filterapi.RuntimeConfig, hdrs map[string]string, _ *slog.Logger, _ bool, _ bool) (Processor, error) {
+		capturedHeaders = hdrs
+		return &mockProcessor{}, nil
+	}, func(path string) map[string]string {
+		const seg = "/models/"
+		idx := strings.LastIndex(path, seg)
+		if idx == -1 {
+			return nil
+		}
+		after := path[idx+len(seg):]
+		if colon := strings.Index(after, ":"); colon != -1 {
+			after = after[:colon]
+		}
+		return map[string]string{"x-aigw-path-model": after}
+	})
+
+	headers := map[string]string{":path": "/v1beta/models/gemini-2.0-flash:generateContent"}
+	proc, err := s.processorForPath(headers, false, slog.Default())
+	require.NoError(t, err)
+	require.NotNil(t, proc)
+
+	require.NotNil(t, capturedHeaders)
+	require.Equal(t, "gemini-2.0-flash", capturedHeaders["x-aigw-path-model"])
 }

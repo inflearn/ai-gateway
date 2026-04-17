@@ -1395,6 +1395,10 @@ type ChatCompletionResponseChoiceMessage struct {
 	// like "reasoningContent" from AWS Bedrock.
 	ReasoningContent *ReasoningContentUnion `json:"reasoning_content,omitempty"`
 
+	// ThinkingBlocks holds structured thinking metadata from Gemini models (e.g. thought summaries
+	// and signatures used for multi-turn conversations with thinking enabled).
+	ThinkingBlocks []ThinkingBlock `json:"thinking_blocks,omitempty"`
+
 	// GCPVertexAI specific fields.
 
 	// SafetyRatings contains safety ratings copied from the GCP Vertex AI response as-is.
@@ -1405,6 +1409,20 @@ type ChatCompletionResponseChoiceMessage struct {
 	// GroundingMetadata specifies sources used to ground generated content.
 	// https://docs.cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1beta1/GroundingMetadata
 	GroundingMetadata *genai.GroundingMetadata `json:"grounding_metadata,omitempty"`
+}
+
+// ThinkingBlock holds a single thinking metadata entry from a Gemini model response.
+// It preserves the thought summary and signature needed for multi-turn conversations
+// with extended thinking enabled.
+type ThinkingBlock struct {
+	// Type is always "thinking".
+	Type string `json:"type"`
+	// Thinking contains the thought summary text.
+	Thinking string `json:"thinking,omitempty"`
+	// Signature is the opaque token required for multi-turn thinking continuations.
+	Signature string `json:"signature,omitempty"`
+	// Data is reserved for future use.
+	Data string `json:"data,omitempty"`
 }
 
 // URLCitation contains citation information for web search results.

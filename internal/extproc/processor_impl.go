@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/envoyproxy/ai-gateway/internal/apischema/gcp"
 	"github.com/envoyproxy/ai-gateway/internal/bodymutator"
 	"github.com/envoyproxy/ai-gateway/internal/endpointspec"
 	"github.com/envoyproxy/ai-gateway/internal/filterapi"
@@ -233,6 +234,25 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequest
 			} else {
 				logger.Debug("request body processing", slog.Any("request", string(jsonBody)))
 			}
+		}
+	}
+
+	// For Gemini native requests the model and stream flag are embedded in the
+	// request path, not in the body.  The server injects them as synthetic headers
+	// (x-aigw-path-model, x-aigw-path-stream) which we promote here so that the
+	// rest of the pipeline sees them like any other request.
+	if pathModel := r.requestHeaders["x-aigw-path-model"]; pathModel != "" && originalModel == "" {
+		originalModel = pathModel
+	}
+	if r.requestHeaders["x-aigw-path-stream"] == "true" {
+		stream = true
+	}
+	// Propagate model/stream into the parsed body so that the translator can
+	// read them from body.Model / body.Stream in RequestBody.
+	if gcpReq, ok := any(body).(*gcp.GenerateContentRequest); ok {
+		gcpReq.Stream = stream
+		if originalModel != "" {
+			gcpReq.Model = originalModel
 		}
 	}
 

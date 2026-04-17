@@ -184,7 +184,7 @@ func Test_parseAndValidateFlags(t *testing.T) {
 			{
 				name:          "invalid endpoint prefixes - unknown key",
 				args:          []string{"-configPath", "/path/to/config.yaml", "-endpointPrefixes", "foo:/x"},
-				expectedError: "failed to parse endpoint prefixes: unknown endpointPrefixes key \"foo\" at position 1 (allowed: openai, cohere, anthropic)",
+				expectedError: "failed to parse endpoint prefixes: unknown endpointPrefixes key \"foo\" at position 1 (allowed: openai, cohere, anthropic, gemini)",
 			},
 			{
 				name:          "invalid endpoint prefixes - missing colon",
@@ -299,5 +299,67 @@ backends:
 		t.Fatal("timeout waiting for startup message")
 	case err := <-errCh:
 		require.NoError(t, err, "extproc exited with error before startup message")
+	}
+}
+
+func TestExtractGeminiPathInfo(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		expected map[string]string
+	}{
+		{
+			name:     "gemini dev api non-streaming",
+			path:     "/v1beta/models/gemini-2.0-flash:generateContent",
+			expected: map[string]string{"x-aigw-path-model": "gemini-2.0-flash"},
+		},
+		{
+			name: "gemini dev api streaming",
+			path: "/v1beta/models/gemini-2.0-flash:streamGenerateContent",
+			expected: map[string]string{
+				"x-aigw-path-model":  "gemini-2.0-flash",
+				"x-aigw-path-stream": "true",
+			},
+		},
+		{
+			name:     "vertex ai non-streaming",
+			path:     "/v1/projects/my-project/locations/us-central1/publishers/google/models/gemini-1.5-pro:generateContent",
+			expected: map[string]string{"x-aigw-path-model": "gemini-1.5-pro"},
+		},
+		{
+			name: "vertex ai streaming",
+			path: "/v1/projects/my-project/locations/us-central1/publishers/google/models/gemini-1.5-pro:streamGenerateContent",
+			expected: map[string]string{
+				"x-aigw-path-model":  "gemini-1.5-pro",
+				"x-aigw-path-stream": "true",
+			},
+		},
+		{
+			name:     "path with query params",
+			path:     "/v1beta/models/gemini-2.0-flash:generateContent?alt=sse",
+			expected: map[string]string{"x-aigw-path-model": "gemini-2.0-flash"},
+		},
+		{
+			name:     "unknown method no stream header",
+			path:     "/v1beta/models/gemini-2.0-flash:unknown",
+			expected: map[string]string{"x-aigw-path-model": "gemini-2.0-flash"},
+		},
+		{
+			name:     "no models segment returns nil",
+			path:     "/v1/chat/completions",
+			expected: nil,
+		},
+		{
+			name:     "no colon after model returns nil",
+			path:     "/v1beta/models/gemini-2.0-flash",
+			expected: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractGeminiPathInfo(tc.path)
+			require.Equal(t, tc.expected, got)
+		})
 	}
 }

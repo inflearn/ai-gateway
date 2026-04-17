@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	gcpschema "github.com/envoyproxy/ai-gateway/internal/apischema/gcp"
 	"github.com/envoyproxy/ai-gateway/internal/endpointspec"
 	"github.com/envoyproxy/ai-gateway/internal/extproc"
 	"github.com/envoyproxy/ai-gateway/internal/filterapi"
@@ -34,6 +35,7 @@ import (
 	"github.com/envoyproxy/ai-gateway/internal/metrics"
 	"github.com/envoyproxy/ai-gateway/internal/requestheaderattrs"
 	"github.com/envoyproxy/ai-gateway/internal/tracing"
+	"github.com/envoyproxy/ai-gateway/internal/tracing/tracingapi"
 	"github.com/envoyproxy/ai-gateway/internal/version"
 )
 
@@ -310,6 +312,29 @@ func Main(ctx context.Context, args []string, stderr io.Writer) (err error) {
 	server.Register(path.Join(flags.rootPrefix, endpointPrefixes.Anthropic, "/v1/messages"), extproc.NewFactory(
 		messagesMetricsFactory, tracing.MessageTracer(), endpointspec.MessagesEndpointSpec{}))
 
+	// Register Gemini native API prefix paths.
+	// Both Gemini Developer API (/v1beta/models/{model}:...) and Vertex AI API
+	// (/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:...)
+	// use the same request format and are handled by the same factory.
+	geminiChatMetricsFactory := metrics.NewMetricsFactory(meter, metricsRequestHeaderAttributes, metrics.GenAIOperationChat)
+	// Gemini passthrough does not convert responses to OpenAI format, so it uses a no-op tracer
+	// parameterized with struct{} for response/chunk types.
+	geminiFactory := extproc.NewFactory(
+		geminiChatMetricsFactory,
+		tracingapi.NoopTracer[gcpschema.GenerateContentRequest, struct{}, struct{}]{},
+		endpointspec.GeminiGenerateContentEndpointSpec{},
+	)
+	server.RegisterPrefix(
+		path.Join(flags.rootPrefix, endpointPrefixes.Gemini, "/v1beta/models/"),
+		geminiFactory,
+		extractGeminiPathInfo,
+	)
+	server.RegisterPrefix(
+		path.Join(flags.rootPrefix, endpointPrefixes.Gemini, "/v1/projects/"),
+		geminiFactory,
+		extractGeminiPathInfo,
+	)
+
 	// Create and register gRPC server with ExternalProcessorServer (the service Envoy calls).
 	if err = filterapi.StartConfigWatcher(ctx, flags.configPath, server, l, time.Second*5); err != nil {
 		return fmt.Errorf("failed to start config watcher: %w", err)
@@ -399,6 +424,40 @@ func Main(ctx context.Context, args []string, stderr io.Writer) (err error) {
 	// it would be extremely hard to debug issues where the external processor fails to start.
 	fmt.Fprintf(stderr, "AI Gateway External Processor is ready\n")
 	return s.Serve(extProcLis)
+}
+
+// extractGeminiPathInfo extracts the model name and streaming flag from a Gemini API path
+// and returns them as synthetic headers to be injected into the request context.
+//
+// Supported path formats:
+//   - /v1beta/models/{model}:generateContent
+//   - /v1beta/models/{model}:streamGenerateContent
+//   - /v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent
+//   - /v1/projects/{project}/locations/{location}/publishers/google/models/{model}:streamGenerateContent
+func extractGeminiPathInfo(rawPath string) map[string]string {
+	// Strip query parameters.
+	p := rawPath
+	if q := strings.Index(p, "?"); q != -1 {
+		p = p[:q]
+	}
+
+	modelsIdx := strings.LastIndex(p, "/models/")
+	if modelsIdx == -1 {
+		return nil
+	}
+	after := p[modelsIdx+len("/models/"):] // e.g. "gemini-2.0-flash:generateContent"
+	colonIdx := strings.Index(after, ":")
+	if colonIdx == -1 {
+		return nil
+	}
+	model := after[:colonIdx]
+	method := after[colonIdx+1:]
+
+	result := map[string]string{"x-aigw-path-model": model}
+	if method == "streamGenerateContent" {
+		result["x-aigw-path-stream"] = "true"
+	}
+	return result
 }
 
 func listen(ctx context.Context, name, network, address string) (net.Listener, error) {

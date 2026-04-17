@@ -9,8 +9,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/genai"
 	"k8s.io/utils/ptr"
 
+	gcpschema "github.com/envoyproxy/ai-gateway/internal/apischema/gcp"
 	cohereschema "github.com/envoyproxy/ai-gateway/internal/apischema/cohere"
 	"github.com/envoyproxy/ai-gateway/internal/apischema/openai"
 	"github.com/envoyproxy/ai-gateway/internal/filterapi"
@@ -1001,4 +1003,83 @@ func TestSpeechEndpointSpec_RedactSensitiveInfoFromRequest(t *testing.T) {
 		require.NotNil(t, redacted.StreamFormat)
 		require.Equal(t, "sse", *redacted.StreamFormat)
 	})
+}
+
+func TestGeminiGenerateContentEndpointSpec_ParseBody(t *testing.T) {
+	spec := GeminiGenerateContentEndpointSpec{}
+
+	t.Run("invalid json", func(t *testing.T) {
+		_, _, _, _, err := spec.ParseBody([]byte("{bad json"), false)
+		require.ErrorContains(t, err, "malformed request")
+	})
+
+	t.Run("empty body with no model or stream (filled later by synthetic headers)", func(t *testing.T) {
+		req := gcpschema.GenerateContentRequest{
+			Contents: []genai.Content{
+				{Role: "user", Parts: []*genai.Part{{Text: "Hello"}}},
+			},
+		}
+		body, err := json.Marshal(req)
+		require.NoError(t, err)
+
+		model, parsed, stream, mutated, err := spec.ParseBody(body, false)
+		require.NoError(t, err)
+		// Model and Stream are json:"-" fields — they are empty after unmarshaling.
+		// The processor fills them from synthetic headers later.
+		require.Equal(t, "", model)
+		require.False(t, stream)
+		require.NotNil(t, parsed)
+		require.Nil(t, mutated)
+		require.Len(t, parsed.Contents, 1)
+	})
+
+	t.Run("body with generation config", func(t *testing.T) {
+		req := gcpschema.GenerateContentRequest{
+			Contents: []genai.Content{
+				{Role: "user", Parts: []*genai.Part{{Text: "Summarize"}}},
+			},
+			GenerationConfig: &genai.GenerationConfig{MaxOutputTokens: 100},
+		}
+		body, err := json.Marshal(req)
+		require.NoError(t, err)
+
+		_, parsed, _, _, err := spec.ParseBody(body, false)
+		require.NoError(t, err)
+		require.NotNil(t, parsed.GenerationConfig)
+	})
+}
+
+func TestGeminiGenerateContentEndpointSpec_GetTranslator(t *testing.T) {
+	spec := GeminiGenerateContentEndpointSpec{}
+
+	t.Run("GCPVertexAI supported", func(t *testing.T) {
+		tr, err := spec.GetTranslator(filterapi.VersionedAPISchema{Name: filterapi.APISchemaGCPVertexAI}, "gemini-override")
+		require.NoError(t, err)
+		require.NotNil(t, tr)
+	})
+
+	t.Run("unsupported schema returns error", func(t *testing.T) {
+		_, err := spec.GetTranslator(filterapi.VersionedAPISchema{Name: filterapi.APISchemaOpenAI}, "")
+		require.ErrorContains(t, err, "unsupported API schema")
+	})
+
+	t.Run("unsupported AWSBedrock returns error", func(t *testing.T) {
+		_, err := spec.GetTranslator(filterapi.VersionedAPISchema{Name: filterapi.APISchemaAWSBedrock}, "")
+		require.ErrorContains(t, err, "unsupported API schema")
+	})
+}
+
+func TestGeminiGenerateContentEndpointSpec_RedactSensitiveInfoFromRequest(t *testing.T) {
+	spec := GeminiGenerateContentEndpointSpec{}
+
+	req := &gcpschema.GenerateContentRequest{
+		Contents: []genai.Content{
+			{Role: "user", Parts: []*genai.Part{{Text: "secret content"}}},
+		},
+	}
+	redacted, err := spec.RedactSensitiveInfoFromRequest(req)
+	require.NoError(t, err)
+	// Current implementation is a pass-through; verify the pointer is returned without error.
+	require.NotNil(t, redacted)
+	require.Equal(t, req, redacted)
 }

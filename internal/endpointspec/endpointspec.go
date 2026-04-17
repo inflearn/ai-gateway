@@ -14,6 +14,7 @@ import (
 
 	"github.com/envoyproxy/ai-gateway/internal/apischema/anthropic"
 	cohereschema "github.com/envoyproxy/ai-gateway/internal/apischema/cohere"
+	gcpschema "github.com/envoyproxy/ai-gateway/internal/apischema/gcp"
 	"github.com/envoyproxy/ai-gateway/internal/apischema/openai"
 	"github.com/envoyproxy/ai-gateway/internal/filterapi"
 	"github.com/envoyproxy/ai-gateway/internal/internalapi"
@@ -92,6 +93,12 @@ type (
 	RerankEndpointSpec struct{}
 	// SpeechEndpointSpec implements EndpointSpec for /v1/audio/speech.
 	SpeechEndpointSpec struct{}
+	// GeminiGenerateContentEndpointSpec implements EndpointSpec for Gemini native API paths
+	// (/v1beta/models/{model}:generateContent, /v1beta/models/{model}:streamGenerateContent,
+	// and the equivalent Vertex AI paths /v1/projects/.../models/{model}:generateContent).
+	// Model and stream flag are extracted from the request path by the server and injected
+	// as synthetic headers; ParseBody returns empty model and stream=false intentionally.
+	GeminiGenerateContentEndpointSpec struct{}
 )
 
 // ParseBody implements [EndpointSpec.ParseBody].
@@ -381,6 +388,36 @@ func (RerankEndpointSpec) GetTranslator(schema filterapi.VersionedAPISchema, mod
 // RedactSensitiveInfoFromRequest implements [EndpointSpec.RedactSensitiveInfoFromRequest].
 func (RerankEndpointSpec) RedactSensitiveInfoFromRequest(req *cohereschema.RerankV2Request) (redactedReq *cohereschema.RerankV2Request, err error) {
 	// Placeholder if redaction is required in future
+	return req, nil
+}
+
+// ParseBody implements [EndpointSpec.ParseBody].
+// Model and stream are intentionally left empty/false; they are filled in by the processor
+// after reading the x-aigw-path-model and x-aigw-path-stream synthetic headers.
+func (GeminiGenerateContentEndpointSpec) ParseBody(
+	body []byte,
+	_ bool,
+) (internalapi.OriginalModel, *gcpschema.GenerateContentRequest, bool, []byte, error) {
+	var req gcpschema.GenerateContentRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return "", nil, false, nil, fmt.Errorf("%w: failed to parse JSON for Gemini generateContent: %w", internalapi.ErrMalformedRequest, err)
+	}
+	// Model and Stream are json:"-" fields populated by the processor from path-derived headers.
+	return internalapi.OriginalModel(req.Model), &req, req.Stream, nil, nil
+}
+
+// GetTranslator implements [EndpointSpec.GetTranslator].
+func (GeminiGenerateContentEndpointSpec) GetTranslator(schema filterapi.VersionedAPISchema, modelNameOverride string) (translator.GeminiGenerateContentTranslator, error) {
+	switch schema.Name {
+	case filterapi.APISchemaGCPVertexAI:
+		return translator.NewGeminiToGCPVertexAITranslator(internalapi.ModelNameOverride(modelNameOverride)), nil
+	default:
+		return nil, fmt.Errorf("unsupported API schema for Gemini generateContent: backend=%s", schema)
+	}
+}
+
+// RedactSensitiveInfoFromRequest implements [EndpointSpec.RedactSensitiveInfoFromRequest].
+func (GeminiGenerateContentEndpointSpec) RedactSensitiveInfoFromRequest(req *gcpschema.GenerateContentRequest) (redactedReq *gcpschema.GenerateContentRequest, err error) {
 	return req, nil
 }
 

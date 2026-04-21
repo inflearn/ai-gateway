@@ -104,6 +104,9 @@ type (
 	EmbeddingsEndpointSpec struct{}
 	// ImageGenerationEndpointSpec implements EndpointSpec for /v1/images/generations.
 	ImageGenerationEndpointSpec struct{}
+	// ImageEditsEndpointSpec implements EndpointSpec for /v1/images/edits.
+	// Requests are multipart/form-data; only the model and prompt fields are extracted for routing.
+	ImageEditsEndpointSpec struct{}
 	// ResponsesEndpointSpec implements EndpointSpec for /v1/responses.
 	ResponsesEndpointSpec struct{}
 	// MessagesEndpointSpec implements EndpointSpec for /v1/messages.
@@ -337,6 +340,80 @@ func (ImageGenerationEndpointSpec) RedactSensitiveInfoFromRequest(req *openai.Im
 	redacted := *req
 	redacted.Prompt = redaction.RedactString(req.Prompt)
 	return &redacted, nil
+}
+
+// ParseBody implements [EndpointSpec.ParseBody].
+// It extracts the model and prompt from the multipart/form-data body without reading binary file parts.
+func (ImageEditsEndpointSpec) ParseBody(
+	body []byte,
+	_ bool,
+) (internalapi.OriginalModel, *openai.ImageEditRequest, bool, []byte, error) {
+	req, err := parseImageEditRequest(body)
+	if err != nil {
+		return "", nil, false, nil, fmt.Errorf("%w: %w", internalapi.ErrMalformedRequest, err)
+	}
+	return req.Model, req, false, nil, nil
+}
+
+// ParseMultipartBody implements [Spec.ParseMultipartBody].
+// Image edit requests are always multipart/form-data; the boundary is sniffed from the
+// body itself so the contentType parameter is not needed.
+func (s ImageEditsEndpointSpec) ParseMultipartBody(body []byte, _ string, costConfigured bool) (internalapi.OriginalModel, *openai.ImageEditRequest, bool, []byte, error) {
+	return s.ParseBody(body, costConfigured)
+}
+
+// GetTranslator implements [EndpointSpec.GetTranslator].
+func (ImageEditsEndpointSpec) GetTranslator(schema filterapi.VersionedAPISchema, modelNameOverride string) (translator.OpenAIImageEditsTranslator, error) {
+	switch schema.Name {
+	case filterapi.APISchemaOpenAI:
+		return translator.NewImageEditsOpenAIToOpenAITranslator(schema.OpenAIPrefix(), modelNameOverride), nil
+	default:
+		return nil, fmt.Errorf("unsupported API schema for image edits: backend=%s", schema)
+	}
+}
+
+// RedactSensitiveInfoFromRequest implements [EndpointSpec.RedactSensitiveInfoFromRequest].
+func (ImageEditsEndpointSpec) RedactSensitiveInfoFromRequest(req *openai.ImageEditRequest) (redactedReq *openai.ImageEditRequest, err error) {
+	redacted := *req
+	redacted.Prompt = redaction.RedactString(req.Prompt)
+	return &redacted, nil
+}
+
+// parseImageEditRequest extracts metadata fields from a raw multipart/form-data body.
+// Only text fields (model, prompt) are read; binary file parts are skipped.
+func parseImageEditRequest(body []byte) (*openai.ImageEditRequest, error) {
+	eol := bytes.Index(body, []byte("\r\n"))
+	if eol < 3 || !bytes.HasPrefix(body, []byte("--")) {
+		return nil, fmt.Errorf("failed to parse multipart for /v1/images/edits: missing boundary marker")
+	}
+	boundary := string(body[2:eol])
+
+	mr := multipart.NewReader(bytes.NewReader(body), boundary)
+	req := &openai.ImageEditRequest{}
+	for {
+		part, err := mr.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse multipart for /v1/images/edits: %w", err)
+		}
+		// Skip file upload parts (image, mask) to avoid reading large binary data.
+		if part.FileName() != "" {
+			continue
+		}
+		data, err := io.ReadAll(part)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read multipart field %q: %w", part.FormName(), err)
+		}
+		switch part.FormName() {
+		case "model":
+			req.Model = string(data)
+		case "prompt":
+			req.Prompt = string(data)
+		}
+	}
+	return req, nil
 }
 
 // ParseBody implements [EndpointSpec.ParseBody].
@@ -608,6 +685,11 @@ func (GeminiGenerateContentEndpointSpec) ParseBody(
 	}
 	// Model and Stream are json:"-" fields populated by the processor from path-derived headers.
 	return internalapi.OriginalModel(req.Model), &req, req.Stream, nil, nil
+}
+
+// ParseMultipartBody implements [Spec.ParseMultipartBody].
+func (GeminiGenerateContentEndpointSpec) ParseMultipartBody([]byte, string, bool) (internalapi.OriginalModel, *gcpschema.GenerateContentRequest, bool, []byte, error) {
+	return "", nil, false, nil, errMultipartNotSupported
 }
 
 // GetTranslator implements [EndpointSpec.GetTranslator].

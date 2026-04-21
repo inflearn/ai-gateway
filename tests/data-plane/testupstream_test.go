@@ -6,10 +6,12 @@
 package dataplane
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/base64"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -28,6 +30,26 @@ import (
 	"github.com/envoyproxy/ai-gateway/internal/version"
 	"github.com/envoyproxy/ai-gateway/tests/internal/testupstreamlib"
 )
+
+// buildImageEditMultipart creates a minimal multipart/form-data body for /v1/images/edits.
+// Returns the body bytes and the Content-Type header value (including boundary).
+func buildImageEditMultipart(model, prompt string) (body string, contentType string) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	if model != "" {
+		fw, _ := w.CreateFormField("model")
+		_, _ = fmt.Fprint(fw, model)
+	}
+	if prompt != "" {
+		fw, _ := w.CreateFormField("prompt")
+		_, _ = fmt.Fprint(fw, prompt)
+	}
+	// Add a minimal fake image file so the request resembles a real edit request.
+	fw, _ := w.CreateFormFile("image", "image.png")
+	_, _ = fw.Write([]byte("fake-png-data"))
+	_ = w.Close()
+	return buf.String(), w.FormDataContentType()
+}
 
 // failIf5xx because 5xx errors are likely a sign of a broken ExtProc or Envoy.
 func failIf5xx(t *testing.T, resp *http.Response, was5xx *bool) {
@@ -103,6 +125,8 @@ func TestWithTestUpstream(t *testing.T) {
 		},
 	}
 
+	imageEditBody, imageEditContentType := buildImageEditMultipart("gpt-image-1-mini", "a cat wearing sunglasses")
+
 	was5xx := false
 	for _, tc := range []struct {
 		// name is the name of the test case.
@@ -115,6 +139,9 @@ func TestWithTestUpstream(t *testing.T) {
 		method,
 		// requestBody is the request requestBody.
 		requestBody,
+		// requestContentType overrides the Content-Type header for the request.
+		// If empty, no Content-Type is set explicitly.
+		requestContentType,
 		// responseBody is the response body to return from the test upstream.
 		responseBody,
 		// responseType is either empty, "sse" or "aws-event-stream" as implemented by the test upstream.
@@ -177,6 +204,18 @@ func TestWithTestUpstream(t *testing.T) {
 			responseBody:    `backend timeout`,
 			expStatus:       http.StatusServiceUnavailable,
 			expResponseBody: `{"error":{"type":"OpenAIBackendError","message":"backend timeout","code":"503"},"type":"error"}`,
+		},
+		{
+			name:               "openai - /v1/images/edits",
+			backend:            "openai",
+			path:               "/v1/images/edits",
+			method:             http.MethodPost,
+			requestBody:        imageEditBody,
+			requestContentType: imageEditContentType,
+			expPath:            "/v1/images/edits",
+			responseBody:       `{"created":1736890000,"data":[{"url":"https://example.com/edited.png"}]}`,
+			expStatus:          http.StatusOK,
+			expResponseBody:    `{"created":1736890000,"data":[{"url":"https://example.com/edited.png"}]}`,
 		},
 		{
 			name:            "unknown path",
@@ -1465,6 +1504,9 @@ data: {"type":"message_stop"}`,
 			listenerAddress := fmt.Sprintf("http://localhost:%d", listenerPort)
 			req, err := http.NewRequestWithContext(t.Context(), tc.method, listenerAddress+tc.path, strings.NewReader(tc.requestBody))
 			require.NoError(t, err)
+			if tc.requestContentType != "" {
+				req.Header.Set("content-type", tc.requestContentType)
+			}
 			req.Header.Set("x-test-backend", tc.backend)
 			req.Header.Set(testupstreamlib.ResponseBodyHeaderKey, base64.StdEncoding.EncodeToString([]byte(tc.responseBody)))
 			req.Header.Set(testupstreamlib.ExpectedPathHeaderKey, base64.StdEncoding.EncodeToString([]byte(tc.expPath)))

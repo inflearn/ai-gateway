@@ -96,6 +96,9 @@ type (
 	EmbeddingsSpan = Span[openai.EmbeddingResponse, struct{}]
 	// ImageGenerationSpan represents an OpenAI image generation.
 	ImageGenerationSpan = Span[openai.ImageGenerationResponse, struct{}]
+	// ImageEditsSpan represents an OpenAI image edits request span.
+	// The response format is identical to ImageGenerationResponse.
+	ImageEditsSpan = Span[openai.ImageGenerationResponse, struct{}]
 	// ResponsesSpan represents an OpenAI responses request span.
 	ResponsesSpan = Span[openai.Response, openai.ResponseStreamEventUnion]
 	// SpeechSpan represents an OpenAI speech synthesis request span.

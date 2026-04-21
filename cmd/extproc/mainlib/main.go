@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	gcpschema "github.com/envoyproxy/ai-gateway/internal/apischema/gcp"
+	"github.com/envoyproxy/ai-gateway/internal/apischema/openai"
 	"github.com/envoyproxy/ai-gateway/internal/endpointspec"
 	"github.com/envoyproxy/ai-gateway/internal/extproc"
 	"github.com/envoyproxy/ai-gateway/internal/filterapi"
@@ -306,6 +307,8 @@ func Main(ctx context.Context, args []string, stderr io.Writer) (err error) {
 		speechMetricsFactory, tracing.SpeechTracer(), endpointspec.SpeechEndpointSpec{}))
 	server.Register(path.Join(flags.rootPrefix, endpointPrefixes.OpenAI, "/v1/images/generations"), extproc.NewFactory(
 		imageGenerationMetricsFactory, tracing.ImageGenerationTracer(), endpointspec.ImageGenerationEndpointSpec{}))
+	server.Register(path.Join(flags.rootPrefix, endpointPrefixes.OpenAI, "/v1/images/edits"), extproc.NewFactory(
+		imageGenerationMetricsFactory, tracingapi.NoopTracer[openai.ImageEditRequest, openai.ImageGenerationResponse, struct{}]{}, endpointspec.ImageEditsEndpointSpec{}))
 	server.Register(path.Join(flags.rootPrefix, endpointPrefixes.Cohere, "/v2/rerank"), extproc.NewFactory(
 		rerankMetricsFactory, tracing.RerankTracer(), endpointspec.RerankEndpointSpec{}))
 	server.Register(path.Join(flags.rootPrefix, endpointPrefixes.OpenAI, "/v1/models"), extproc.NewModelsProcessor)

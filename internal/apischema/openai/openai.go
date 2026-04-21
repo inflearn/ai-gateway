@@ -2172,6 +2172,16 @@ type ImageGenerationResponseData struct {
 	RevisedPrompt string `json:"revised_prompt,omitempty"`
 }
 
+// ImageEditRequest represents the metadata extracted from a /v1/images/edits request.
+// The actual request is multipart/form-data; only the non-binary fields are captured here
+// for routing and observability purposes.
+type ImageEditRequest struct {
+	// Model is the model to use for image editing (e.g. "gpt-image-1").
+	Model string
+	// Prompt is the text description of the desired edit.
+	Prompt string
+}
+
 // ResponseRequest represents a request to the /v1/responses endpoint.
 // The Responses API is a stateful API that combines capabilities from chat completions and assistants.
 // Docs: https://platform.openai.com/docs/api-reference/responses/create

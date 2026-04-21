@@ -6,6 +6,9 @@
 package endpointspec
 
 import (
+	"bytes"
+	"fmt"
+	"mime/multipart"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -201,6 +204,77 @@ func TestImageGenerationEndpointSpec_GetTranslator(t *testing.T) {
 
 	_, err = spec.GetTranslator(filterapi.VersionedAPISchema{Name: filterapi.APISchemaAzureOpenAI}, "override")
 	require.ErrorContains(t, err, "unsupported API schema")
+}
+
+func TestImageEditsEndpointSpec_ParseBody(t *testing.T) {
+	spec := ImageEditsEndpointSpec{}
+
+	buildMultipart := func(boundary, model, prompt string) []byte {
+		var buf bytes.Buffer
+		w := multipart.NewWriter(&buf)
+		_ = w.SetBoundary(boundary)
+		if model != "" {
+			fw, _ := w.CreateFormField("model")
+			_, _ = fmt.Fprint(fw, model)
+		}
+		if prompt != "" {
+			fw, _ := w.CreateFormField("prompt")
+			_, _ = fmt.Fprint(fw, prompt)
+		}
+		fw, _ := w.CreateFormFile("image", "image.png")
+		_, _ = fw.Write([]byte("fake-png-bytes"))
+		_ = w.Close()
+		return buf.Bytes()
+	}
+
+	t.Run("invalid body", func(t *testing.T) {
+		_, _, _, _, err := spec.ParseBody([]byte("not multipart"), false)
+		require.ErrorContains(t, err, "malformed request")
+	})
+
+	t.Run("success with model and prompt", func(t *testing.T) {
+		body := buildMultipart("testboundary", "gpt-image-1", "a cat")
+
+		model, parsed, stream, mutated, err := spec.ParseBody(body, false)
+		require.NoError(t, err)
+		require.Equal(t, "gpt-image-1", model)
+		require.Equal(t, "gpt-image-1", parsed.Model)
+		require.Equal(t, "a cat", parsed.Prompt)
+		require.False(t, stream)
+		require.Nil(t, mutated)
+	})
+
+	t.Run("success with file only (no text fields)", func(t *testing.T) {
+		body := buildMultipart("testboundary", "", "")
+
+		model, parsed, stream, mutated, err := spec.ParseBody(body, false)
+		require.NoError(t, err)
+		require.Empty(t, model)
+		require.Empty(t, parsed.Model)
+		require.False(t, stream)
+		require.Nil(t, mutated)
+	})
+}
+
+func TestImageEditsEndpointSpec_GetTranslator(t *testing.T) {
+	spec := ImageEditsEndpointSpec{}
+
+	_, err := spec.GetTranslator(filterapi.VersionedAPISchema{Name: filterapi.APISchemaOpenAI}, "override")
+	require.NoError(t, err)
+
+	_, err = spec.GetTranslator(filterapi.VersionedAPISchema{Name: filterapi.APISchemaAWSBedrock}, "override")
+	require.ErrorContains(t, err, "unsupported API schema for image edits")
+}
+
+func TestImageEditsEndpointSpec_RedactSensitiveInfo(t *testing.T) {
+	spec := ImageEditsEndpointSpec{}
+	req := &openai.ImageEditRequest{Model: "gpt-image-1", Prompt: "a secret cat"}
+
+	redacted, err := spec.RedactSensitiveInfoFromRequest(req)
+	require.NoError(t, err)
+	require.Equal(t, "gpt-image-1", redacted.Model)
+	require.NotEqual(t, req.Prompt, redacted.Prompt)
+	require.Contains(t, redacted.Prompt, "REDACTED")
 }
 
 func TestMessagesEndpointSpec_ParseBody(t *testing.T) {

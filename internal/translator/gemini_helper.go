@@ -761,17 +761,14 @@ func geminiCandidatesToOpenAIChoices(candidates []*genai.Candidate, responseMode
 			// Extract thought summary and text from parts.
 			thoughtSummary, content, signature := extractTextAndThoughtSummaryFromGeminiParts(candidate.Content.Parts, responseMode)
 			if thoughtSummary != "" {
-				// Use a plain string for reasoning_content (LiteLLM-compatible).
 				message.ReasoningContent = &openai.ReasoningContentUnion{Value: thoughtSummary}
 			}
-			// Preserve structured thinking metadata (signature required for multi-turn continuations).
-			if thoughtSummary != "" || signature != "" {
+			if signature != "" {
 				message.ThinkingBlocks = append(message.ThinkingBlocks, openai.ThinkingBlock{
-					Type:      "thinking",
-					Thinking:  thoughtSummary,
-					Signature: signature,
+					Type: "thinking", Thinking: thoughtSummary, Signature: signature,
 				})
 			}
+
 			if content != "" {
 				message.Content = &content
 			}
@@ -784,13 +781,12 @@ func geminiCandidatesToOpenAIChoices(candidates []*genai.Candidate, responseMode
 			}
 			message.ToolCalls = toolCalls
 
-			// when the model responds with tool calls, it should not respond with a text at the same time. Thus, we do not need to merge them together
-			if toolCallSignature != "" {
-				// Append a ThinkingBlock carrying only the tool-call signature.
+			if toolCallSignature != "" && len(message.ThinkingBlocks) == 0 {
 				message.ThinkingBlocks = append(message.ThinkingBlocks, openai.ThinkingBlock{
-					Type:      "thinking",
-					Signature: toolCallSignature,
+					Type: "thinking", Signature: toolCallSignature,
 				})
+			} else if toolCallSignature != "" && len(message.ThinkingBlocks) > 0 {
+				message.ThinkingBlocks[0].Signature = toolCallSignature
 			}
 
 			// If there's no content but there are tool calls, set content to nil.

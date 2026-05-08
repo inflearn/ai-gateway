@@ -1395,8 +1395,10 @@ type ChatCompletionResponseChoiceMessage struct {
 	// like "reasoningContent" from AWS Bedrock.
 	ReasoningContent *ReasoningContentUnion `json:"reasoning_content,omitempty"`
 
-	// ThinkingBlocks holds structured thinking metadata from Gemini models (e.g. thought summaries
-	// and signatures used for multi-turn conversations with thinking enabled).
+	// ThinkingBlocks holds structured thinking metadata (signatures, redacted content) from providers
+	// that expose it (Anthropic, Bedrock, Gemini). This preserves full fidelity without breaking
+	// clients that expect reasoning_content to be a plain string.
+	// See https://docs.litellm.ai/docs/reasoning_content for the convention.
 	ThinkingBlocks []ThinkingBlock `json:"thinking_blocks,omitempty"`
 
 	// GCPVertexAI specific fields.
@@ -1409,20 +1411,6 @@ type ChatCompletionResponseChoiceMessage struct {
 	// GroundingMetadata specifies sources used to ground generated content.
 	// https://docs.cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1beta1/GroundingMetadata
 	GroundingMetadata *genai.GroundingMetadata `json:"grounding_metadata,omitempty"`
-}
-
-// ThinkingBlock holds a single thinking metadata entry from a Gemini model response.
-// It preserves the thought summary and signature needed for multi-turn conversations
-// with extended thinking enabled.
-type ThinkingBlock struct {
-	// Type is always "thinking".
-	Type string `json:"type"`
-	// Thinking contains the thought summary text.
-	Thinking string `json:"thinking,omitempty"`
-	// Signature is the opaque token required for multi-turn thinking continuations.
-	Signature string `json:"signature,omitempty"`
-	// Data is reserved for future use.
-	Data string `json:"data,omitempty"`
 }
 
 // URLCitation contains citation information for web search results.
@@ -1454,6 +1442,16 @@ type ChatCompletionResponseChoiceMessageAudio struct {
 	ExpiresAt  int64  `json:"expires_at"`
 	ID         string `json:"id"`
 	Transcript string `json:"transcript"`
+}
+
+// ThinkingBlock represents a structured block of thinking/reasoning content from a model.
+// This follows the convention established by LiteLLM for preserving provider-specific
+// metadata (signatures, redacted content) alongside the plain-string reasoning_content.
+type ThinkingBlock struct {
+	Type      string `json:"type"` // "thinking" or "redacted_thinking"
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	Data      string `json:"data,omitempty"` // base64 redacted_thinking
 }
 
 // CompletionTokensDetails breakdown of tokens used in a completion.

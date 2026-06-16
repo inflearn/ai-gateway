@@ -1528,14 +1528,23 @@ func TestGeminiCachedContentsEndpointSpec_ParseBody(t *testing.T) {
 		require.Nil(t, mutated)
 	})
 
-	t.Run("POST body with model extracts model", func(t *testing.T) {
+	t.Run("POST body with full Vertex model path is normalised to short name", func(t *testing.T) {
 		body := []byte(`{"model":"projects/p/locations/us-central1/publishers/google/models/gemini-1.5-pro","ttl":"3600s"}`)
 		model, req, stream, _, err := spec.ParseBody(body, false)
 		require.NoError(t, err)
-		require.Equal(t, "projects/p/locations/us-central1/publishers/google/models/gemini-1.5-pro", string(model))
+		require.Equal(t, "gemini-1.5-pro", string(model), "OriginalModel must be the short name so AIGatewayRoute headers match")
 		require.NotNil(t, req)
+		// The body struct keeps the original full path for the translator to act on.
+		require.Equal(t, "projects/p/locations/us-central1/publishers/google/models/gemini-1.5-pro", req.Model)
 		require.Equal(t, "3600s", req.TTL)
 		require.False(t, stream)
+	})
+
+	t.Run("POST body with bare short model name passes through", func(t *testing.T) {
+		body := []byte(`{"model":"gemini-2.5-flash","ttl":"60s"}`)
+		model, _, _, _, err := spec.ParseBody(body, false)
+		require.NoError(t, err)
+		require.Equal(t, "gemini-2.5-flash", string(model))
 	})
 
 	t.Run("invalid JSON returns malformed request", func(t *testing.T) {

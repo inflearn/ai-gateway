@@ -8,6 +8,7 @@ package translator
 import (
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 
@@ -17,6 +18,18 @@ import (
 	"github.com/envoyproxy/ai-gateway/internal/internalapi"
 	"github.com/envoyproxy/ai-gateway/internal/metrics"
 	"github.com/envoyproxy/ai-gateway/internal/tracing/tracingapi"
+)
+
+// Vertex AI's cachedContents API requires the body's "model" field to be a fully-qualified
+// resource: projects/{p}/locations/{r}/publishers/google/models/{m}. Clients (Java GenAI SDK in
+// Developer-API mode, curl scripts, etc.) typically send only "models/{m}" or "{m}", so the
+// translator must normalise it. The project/location it normalises to is read from these env
+// vars at request time, set on the ext_proc container via the controller's extProcExtraEnvVars
+// flag. Falling back gracefully (no rewrite) when unset keeps unit tests and dev environments
+// without the vars in scope.
+const (
+	envGCPProject  = "GCP_PROJECT"
+	envGCPLocation = "GCP_LOCATION"
 )
 
 // GeminiCachedContentsSpan is the span type for Gemini cachedContents passthrough.
@@ -47,19 +60,30 @@ func NewGeminiCachedContentsToGCPVertexAITranslator(modelNameOverride internalap
 	return &geminiCachedContentsToGCPVertexAITranslator{modelNameOverride: modelNameOverride}
 }
 
-// RequestBody implements [GeminiCachedContentsTranslator.RequestBody]. When modelNameOverride is
-// set and the inbound body carries a model field, rewrite it (preserving the Vertex resource
-// prefix if present) so the cached content is created against the same backend model
-// generateContent will use.
+// RequestBody implements [GeminiCachedContentsTranslator.RequestBody].
+//
+// For cachedContents POST/PATCH the body's "model" field must be a fully-qualified Vertex
+// resource. We:
+//  1. Apply modelNameOverride (e.g. alias gemini-1.5-pro → gemini-1.5-pro-preview).
+//  2. If GCP_PROJECT and GCP_LOCATION are set in the environment, expand whatever short form
+//     the client sent (or the override produced) into
+//     "projects/{GCP_PROJECT}/locations/{GCP_LOCATION}/publishers/google/models/{m}".
+//
+// When the env vars are unset (unit tests, fresh dev clusters) we fall back to the previous
+// behaviour — only modelNameOverride is applied, leaving any normalisation to the backend.
 func (g *geminiCachedContentsToGCPVertexAITranslator) RequestBody(
 	original []byte, body *gcp.CachedContentRequest, forceBodyMutation bool,
 ) (newHeaders []internalapi.Header, newBody []byte, err error) {
-	if g.modelNameOverride != "" && body != nil && body.Model != "" {
-		rewritten := rewriteVertexModelName(body.Model, string(g.modelNameOverride))
-		if rewritten != body.Model {
-			newBody, err = sjson.SetBytesOptions(original, "model", rewritten, sjsonOptions)
+	if body != nil && body.Model != "" {
+		desired := body.Model
+		if g.modelNameOverride != "" {
+			desired = rewriteVertexModelName(desired, string(g.modelNameOverride))
+		}
+		desired = expandToVertexFullModelPath(desired, os.Getenv(envGCPProject), os.Getenv(envGCPLocation))
+		if desired != body.Model {
+			newBody, err = sjson.SetBytesOptions(original, "model", desired, sjsonOptions)
 			if err != nil {
-				return nil, nil, fmt.Errorf("failed to apply modelNameOverride to cachedContents body: %w", err)
+				return nil, nil, fmt.Errorf("failed to normalise cachedContents body model: %w", err)
 			}
 		}
 	}
@@ -78,7 +102,6 @@ func (g *geminiCachedContentsToGCPVertexAITranslator) RequestBody(
 // resource path, in which case it is returned as-is.
 func rewriteVertexModelName(original, override string) string {
 	if strings.Contains(override, "/models/") {
-		// Caller already supplied a fully-qualified resource name; use it verbatim.
 		return override
 	}
 	const seg = "/models/"
@@ -87,6 +110,22 @@ func rewriteVertexModelName(original, override string) string {
 		return override
 	}
 	return original[:idx+len(seg)] + override
+}
+
+// expandToVertexFullModelPath promotes "models/{m}" or bare "{m}" model identifiers into the
+// fully-qualified Vertex form Vertex's cachedContents API insists on. Returns the input
+// unchanged when project/location are not configured or when the input already looks like a
+// full Vertex resource ("projects/..." or "publishers/google/models/...").
+func expandToVertexFullModelPath(model, project, location string) string {
+	if project == "" || location == "" {
+		return model
+	}
+	if strings.HasPrefix(model, "projects/") || strings.Contains(model, "publishers/google/models/") {
+		return model
+	}
+	// Strip a leading "models/" if present so the short name is canonical.
+	short := strings.TrimPrefix(model, "models/")
+	return fmt.Sprintf("projects/%s/locations/%s/publishers/google/models/%s", project, location, short)
 }
 
 // ResponseHeaders implements [GeminiCachedContentsTranslator.ResponseHeaders].

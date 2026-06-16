@@ -15,6 +15,14 @@ import (
 	"github.com/envoyproxy/ai-gateway/internal/apischema/gcp"
 )
 
+// withEnvVars sets env vars for the duration of the test, restoring previous values on cleanup.
+func withEnvVars(t *testing.T, kv map[string]string) {
+	t.Helper()
+	for k, v := range kv {
+		t.Setenv(k, v)
+	}
+}
+
 func TestGeminiCachedContents_RequestBody(t *testing.T) {
 	t.Run("no override, no forceBodyMutation: passthrough", func(t *testing.T) {
 		tr := NewGeminiCachedContentsToGCPVertexAITranslator("")
@@ -67,6 +75,52 @@ func TestGeminiCachedContents_RequestBody(t *testing.T) {
 		require.Nil(t, headers)
 		require.Nil(t, body)
 	})
+
+	t.Run("GCP env vars expand short model to full Vertex path", func(t *testing.T) {
+		withEnvVars(t, map[string]string{"GCP_PROJECT": "p1", "GCP_LOCATION": "global"})
+		tr := NewGeminiCachedContentsToGCPVertexAITranslator("")
+		raw := []byte(`{"model":"models/gemini-2.5-flash"}`)
+		_, body, err := tr.RequestBody(raw, &gcp.CachedContentRequest{Model: "models/gemini-2.5-flash"}, false)
+		require.NoError(t, err)
+		require.Contains(t, string(body), `"model":"projects/p1/locations/global/publishers/google/models/gemini-2.5-flash"`)
+	})
+
+	t.Run("GCP env vars + modelNameOverride: override applied first, then expanded", func(t *testing.T) {
+		withEnvVars(t, map[string]string{"GCP_PROJECT": "p1", "GCP_LOCATION": "global"})
+		tr := NewGeminiCachedContentsToGCPVertexAITranslator("gemini-3.1-flash-lite-preview")
+		raw := []byte(`{"model":"models/gemini-3.1-flash-lite"}`)
+		_, body, err := tr.RequestBody(raw, &gcp.CachedContentRequest{Model: "models/gemini-3.1-flash-lite"}, false)
+		require.NoError(t, err)
+		require.Contains(t, string(body), `"model":"projects/p1/locations/global/publishers/google/models/gemini-3.1-flash-lite-preview"`)
+	})
+
+	t.Run("already full Vertex path is left as-is even with env vars set", func(t *testing.T) {
+		withEnvVars(t, map[string]string{"GCP_PROJECT": "wrong", "GCP_LOCATION": "wrong"})
+		tr := NewGeminiCachedContentsToGCPVertexAITranslator("")
+		raw := []byte(`{"model":"projects/p1/locations/global/publishers/google/models/gemini-2.5-flash"}`)
+		headers, body, err := tr.RequestBody(raw, &gcp.CachedContentRequest{Model: "projects/p1/locations/global/publishers/google/models/gemini-2.5-flash"}, false)
+		require.NoError(t, err)
+		require.Nil(t, headers)
+		require.Nil(t, body)
+	})
+}
+
+func TestExpandToVertexFullModelPath(t *testing.T) {
+	tests := []struct {
+		name, model, project, location, want string
+	}{
+		{"unset env: noop", "gemini-2.5-flash", "", "", "gemini-2.5-flash"},
+		{"only project: noop", "gemini-2.5-flash", "p", "", "gemini-2.5-flash"},
+		{"bare short", "gemini-2.5-flash", "p", "global", "projects/p/locations/global/publishers/google/models/gemini-2.5-flash"},
+		{"models/X form", "models/gemini-2.5-flash", "p", "global", "projects/p/locations/global/publishers/google/models/gemini-2.5-flash"},
+		{"already full path: noop", "projects/p/locations/global/publishers/google/models/gemini-2.5-flash", "wrong", "wrong", "projects/p/locations/global/publishers/google/models/gemini-2.5-flash"},
+		{"publishers form: noop", "publishers/google/models/gemini-2.5-flash", "wrong", "wrong", "publishers/google/models/gemini-2.5-flash"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, expandToVertexFullModelPath(tc.model, tc.project, tc.location))
+		})
+	}
 }
 
 func TestRewriteVertexModelName(t *testing.T) {

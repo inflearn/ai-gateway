@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/genai"
 
 	"github.com/envoyproxy/ai-gateway/internal/apischema/gcp"
 )
@@ -102,6 +103,50 @@ func TestGeminiCachedContents_RequestBody(t *testing.T) {
 		require.NoError(t, err)
 		require.Nil(t, headers)
 		require.Nil(t, body)
+	})
+
+	t.Run("contents without role get role=user default", func(t *testing.T) {
+		// Java GenAI SDK sometimes sends content parts without role; Vertex rejects them.
+		tr := NewGeminiCachedContentsToGCPVertexAITranslator("")
+		raw := []byte(`{"contents":[{"parts":[{"text":"hi"}]}]}`)
+		// Parsed struct mirrors the JSON — Role is empty.
+		parsed := &gcp.CachedContentRequest{
+			Contents: []genai.Content{{Parts: []*genai.Part{{Text: "hi"}}}},
+		}
+		_, body, err := tr.RequestBody(raw, parsed, false)
+		require.NoError(t, err)
+		require.Contains(t, string(body), `"role":"user"`)
+	})
+
+	t.Run("contents with role already set are left alone", func(t *testing.T) {
+		tr := NewGeminiCachedContentsToGCPVertexAITranslator("")
+		raw := []byte(`{"contents":[{"role":"model","parts":[{"text":"hi"}]}]}`)
+		parsed := &gcp.CachedContentRequest{
+			Contents: []genai.Content{{Role: "model", Parts: []*genai.Part{{Text: "hi"}}}},
+		}
+		headers, body, err := tr.RequestBody(raw, parsed, false)
+		require.NoError(t, err)
+		require.Nil(t, headers)
+		require.Nil(t, body)
+	})
+
+	t.Run("mixed: model expansion + role default applied together", func(t *testing.T) {
+		withEnvVars(t, map[string]string{"GCP_PROJECT": "p1", "GCP_LOCATION": "global"})
+		tr := NewGeminiCachedContentsToGCPVertexAITranslator("")
+		raw := []byte(`{"model":"models/gemini-3.1-flash-lite","contents":[{"parts":[{"text":"x"}]},{"role":"model","parts":[{"text":"y"}]}]}`)
+		parsed := &gcp.CachedContentRequest{
+			Model: "models/gemini-3.1-flash-lite",
+			Contents: []genai.Content{
+				{Parts: []*genai.Part{{Text: "x"}}},
+				{Role: "model", Parts: []*genai.Part{{Text: "y"}}},
+			},
+		}
+		_, body, err := tr.RequestBody(raw, parsed, false)
+		require.NoError(t, err)
+		require.Contains(t, string(body), `"model":"projects/p1/locations/global/publishers/google/models/gemini-3.1-flash-lite"`)
+		// First content gets role:user, second keeps its role:model.
+		require.Contains(t, string(body), `"role":"user"`)
+		require.Contains(t, string(body), `"role":"model"`)
 	})
 }
 

@@ -715,6 +715,12 @@ func (GeminiGenerateContentEndpointSpec) RedactSensitiveInfoFromRequest(req *gcp
 // ParseBody implements [Spec.ParseBody] for cachedContents management requests.
 // POST/PATCH carry a JSON CachedContentRequest body; GET/DELETE bodies are empty.
 // Empty bodies parse to a zero-value request so the processor can still dispatch.
+//
+// The model returned as OriginalModel is normalised to its short name (e.g. "gemini-1.5-pro")
+// even when the request body uses the full Vertex resource form
+// "projects/.../publishers/google/models/{m}". AIGatewayRoute header matches and
+// modelNameOverride mappings are written against the short form, so we have to expose the
+// same shape ext_proc does for every other endpoint.
 func (GeminiCachedContentsEndpointSpec) ParseBody(
 	body []byte,
 	_ bool,
@@ -725,8 +731,21 @@ func (GeminiCachedContentsEndpointSpec) ParseBody(
 			return "", nil, false, nil, fmt.Errorf("%w: failed to parse JSON for cachedContents: %w", internalapi.ErrMalformedRequest, err)
 		}
 	}
-	// cachedContents is never streamed. Model is best-effort — POST has it, GET/DELETE do not.
-	return internalapi.OriginalModel(req.Model), &req, false, nil, nil
+	model := normalizeVertexModelName(req.Model)
+	// cachedContents is never streamed.
+	return internalapi.OriginalModel(model), &req, false, nil, nil
+}
+
+// normalizeVertexModelName trims any Vertex AI resource prefix from a model identifier and
+// returns just the short model name (the segment after the last "/models/"). Returns the
+// input unchanged when no prefix is present.
+func normalizeVertexModelName(m string) string {
+	const seg = "/models/"
+	idx := strings.LastIndex(m, seg)
+	if idx == -1 {
+		return m
+	}
+	return m[idx+len(seg):]
 }
 
 // ParseMultipartBody implements [Spec.ParseMultipartBody]. cachedContents is JSON-only.
@@ -734,11 +753,12 @@ func (GeminiCachedContentsEndpointSpec) ParseMultipartBody([]byte, string, bool)
 	return "", nil, false, nil, errMultipartNotSupported
 }
 
-// GetTranslator implements [EndpointSpec.GetTranslator].
-func (GeminiCachedContentsEndpointSpec) GetTranslator(schema filterapi.VersionedAPISchema, _ string) (translator.GeminiCachedContentsTranslator, error) {
+// GetTranslator implements [EndpointSpec.GetTranslator]. The modelNameOverride is forwarded to
+// the translator so cache-create bodies pick up the same model alias mapping as generateContent.
+func (GeminiCachedContentsEndpointSpec) GetTranslator(schema filterapi.VersionedAPISchema, modelNameOverride string) (translator.GeminiCachedContentsTranslator, error) {
 	switch schema.Name {
 	case filterapi.APISchemaGCPVertexAI:
-		return translator.NewGeminiCachedContentsToGCPVertexAITranslator(), nil
+		return translator.NewGeminiCachedContentsToGCPVertexAITranslator(internalapi.ModelNameOverride(modelNameOverride)), nil
 	default:
 		return nil, fmt.Errorf("unsupported API schema for Gemini cachedContents: backend=%s", schema)
 	}

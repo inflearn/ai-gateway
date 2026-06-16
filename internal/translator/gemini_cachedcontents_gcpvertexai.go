@@ -6,8 +6,12 @@
 package translator
 
 import (
+	"fmt"
 	"io"
 	"strconv"
+	"strings"
+
+	"github.com/tidwall/sjson"
 
 	"github.com/envoyproxy/ai-gateway/internal/apischema/gcp"
 	"github.com/envoyproxy/ai-gateway/internal/internalapi"
@@ -23,36 +27,66 @@ type GeminiCachedContentsSpan = tracingapi.Span[struct{}, struct{}]
 type GeminiCachedContentsTranslator = Translator[gcp.CachedContentRequest, GeminiCachedContentsSpan]
 
 // geminiCachedContentsToGCPVertexAITranslator forwards cachedContents management calls (CRUD) to
-// GCP Vertex AI without modifying the request. The full URL — including project, location, and
-// the cachedContents resource path — is sent by the client and preserved end-to-end.
+// GCP Vertex AI. The path is preserved as-is — backendauth.gcpHandler.Do recognises the
+// "/v1/projects/" prefix and skips its own prepend, so the upstream URL stays exactly as the
+// client sent it.
 //
-// Path prefix handling: cachedContents requests arrive with a full
-// "/v1/projects/{p}/locations/{r}/cachedContents/..." path. The shared GCP backend auth handler
-// (internal/backendauth/gcp.go) detects this prefix and skips prepending its configured
-// project/location, so the upstream URL stays exactly as the client sent it. This keeps
-// generateContent's short-suffix convention working untouched while letting cachedContents
-// use full Google-style paths.
+// When modelNameOverride is set (e.g. via AIGatewayRoute aliasing "gemini-1.5-pro" to a specific
+// preview release), the body's "model" field on a POST is rewritten to the override before
+// forwarding. This keeps cache-create symmetric with generateContent: the model that lands in
+// Vertex's stored cache matches the model later sent on generateContent calls, so the cache is
+// usable.
 //
-// GET/PATCH/DELETE have no request body — Envoy will not invoke ProcessRequestBody for them, so
-// no translator method runs at all in that case. The unchanged path is enough on its own.
-type geminiCachedContentsToGCPVertexAITranslator struct{}
-
-// NewGeminiCachedContentsToGCPVertexAITranslator creates a passthrough translator for cachedContents.
-func NewGeminiCachedContentsToGCPVertexAITranslator() GeminiCachedContentsTranslator {
-	return &geminiCachedContentsToGCPVertexAITranslator{}
+// GET / PATCH / DELETE have no body; the translator forwards them unchanged.
+type geminiCachedContentsToGCPVertexAITranslator struct {
+	modelNameOverride internalapi.ModelNameOverride
 }
 
-// RequestBody implements [GeminiCachedContentsTranslator.RequestBody]. Pure passthrough — no
-// path or body mutation. When forceBodyMutation is set (retry path) we echo the original body
-// back so the upstream filter forwards it.
+// NewGeminiCachedContentsToGCPVertexAITranslator creates a passthrough translator for cachedContents.
+func NewGeminiCachedContentsToGCPVertexAITranslator(modelNameOverride internalapi.ModelNameOverride) GeminiCachedContentsTranslator {
+	return &geminiCachedContentsToGCPVertexAITranslator{modelNameOverride: modelNameOverride}
+}
+
+// RequestBody implements [GeminiCachedContentsTranslator.RequestBody]. When modelNameOverride is
+// set and the inbound body carries a model field, rewrite it (preserving the Vertex resource
+// prefix if present) so the cached content is created against the same backend model
+// generateContent will use.
 func (g *geminiCachedContentsToGCPVertexAITranslator) RequestBody(
-	original []byte, _ *gcp.CachedContentRequest, forceBodyMutation bool,
+	original []byte, body *gcp.CachedContentRequest, forceBodyMutation bool,
 ) (newHeaders []internalapi.Header, newBody []byte, err error) {
-	if forceBodyMutation && len(original) > 0 {
+	if g.modelNameOverride != "" && body != nil && body.Model != "" {
+		rewritten := rewriteVertexModelName(body.Model, string(g.modelNameOverride))
+		if rewritten != body.Model {
+			newBody, err = sjson.SetBytesOptions(original, "model", rewritten, sjsonOptions)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to apply modelNameOverride to cachedContents body: %w", err)
+			}
+		}
+	}
+	if forceBodyMutation && len(newBody) == 0 && len(original) > 0 {
 		newBody = original
+	}
+	if len(newBody) > 0 {
 		newHeaders = []internalapi.Header{{contentLengthHeaderName, strconv.Itoa(len(newBody))}}
 	}
 	return
+}
+
+// rewriteVertexModelName replaces the short model name segment in a Vertex resource path while
+// preserving the "projects/.../publishers/google/models/" prefix. If the input has no such
+// prefix, it returns the override directly. The override itself is also accepted as a full
+// resource path, in which case it is returned as-is.
+func rewriteVertexModelName(original, override string) string {
+	if strings.Contains(override, "/models/") {
+		// Caller already supplied a fully-qualified resource name; use it verbatim.
+		return override
+	}
+	const seg = "/models/"
+	idx := strings.LastIndex(original, seg)
+	if idx == -1 {
+		return override
+	}
+	return original[:idx+len(seg)] + override
 }
 
 // ResponseHeaders implements [GeminiCachedContentsTranslator.ResponseHeaders].

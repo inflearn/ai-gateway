@@ -22,8 +22,8 @@ set -euo pipefail
 GW="${GW:-https://ai-gateway.devinflab.com}"
 TOKEN="${TOKEN:?TOKEN env var required (e.g. your.name@inflab.com)}"
 PROJECT="${PROJECT:?PROJECT env var required (GCP project id)}"
-REGION="${REGION:-asia-northeast3}"
-MODEL="${MODEL:-gemini-2.5-flash}"
+REGION="${REGION:-global}"
+MODEL="${MODEL:-gemini-3.1-flash-lite}"
 
 BLUE=$'\033[1;34m'; GREEN=$'\033[1;32m'; RED=$'\033[1;31m'; YELLOW=$'\033[1;33m'; NC=$'\033[0m'
 
@@ -119,7 +119,9 @@ do_get() {
   local name="${1:?usage: get <cache-resource-name>}"
   step "Get $name"
   local http_code
-  http_code=$(curl -sS -o /tmp/cc-get-resp -w "%{http_code}" -X GET "$GW/$name" \
+  # Google returns "name" as "projects/.../cachedContents/{id}" with no leading /v1.
+  # Vertex AI requires the request path to start with /v1, so prepend it.
+  http_code=$(curl -sS -o /tmp/cc-get-resp -w "%{http_code}" -X GET "$GW/v1/$name" \
     -H "Authorization: Bearer $TOKEN")
   local resp
   resp=$(cat /tmp/cc-get-resp)
@@ -177,7 +179,7 @@ do_patch() {
   local name="${1:?usage: patch <cache-resource-name> <new-ttl>}"
   local ttl="${2:?usage: patch <cache-resource-name> <new-ttl>}"
   step "Patch ttl=$ttl on $name"
-  curl -sS -X PATCH "$GW/$name?updateMask=ttl" \
+  curl -sS -X PATCH "$GW/v1/$name?updateMask=ttl" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d "{\"ttl\": \"$ttl\"}" | jq '{name, ttl, expireTime}'
@@ -188,7 +190,7 @@ do_delete() {
   local name="${1:?usage: delete <cache-resource-name>}"
   step "Delete $name"
   local code
-  code=$(curl -sS -o /tmp/del-body -w "%{http_code}" -X DELETE "$GW/$name" \
+  code=$(curl -sS -o /tmp/del-body -w "%{http_code}" -X DELETE "$GW/v1/$name" \
     -H "Authorization: Bearer $TOKEN")
   if [[ "$code" == "200" || "$code" == "204" ]]; then
     ok "Deleted (HTTP $code)"

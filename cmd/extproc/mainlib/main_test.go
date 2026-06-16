@@ -371,29 +371,34 @@ func TestExtractGeminiCachedContentsPathInfo(t *testing.T) {
 		expected map[string]string
 	}{
 		{
-			name:     "dev api list/create",
+			name:     "dev api list/create (no region segment)",
 			path:     "/v1beta/cachedContents",
 			expected: map[string]string{"x-aigw-endpoint": "cachedContents"},
 		},
 		{
-			name:     "dev api get/patch/delete by id",
+			name:     "dev api get/patch/delete by id (no region segment)",
 			path:     "/v1beta/cachedContents/abc123",
 			expected: map[string]string{"x-aigw-endpoint": "cachedContents"},
 		},
 		{
-			name:     "vertex ai list/create",
+			name:     "vertex ai us-central1 list/create extracts region",
 			path:     "/v1/projects/p/locations/us-central1/cachedContents",
-			expected: map[string]string{"x-aigw-endpoint": "cachedContents"},
+			expected: map[string]string{"x-aigw-endpoint": "cachedContents", "x-aigw-region": "us-central1"},
 		},
 		{
-			name:     "vertex ai by id",
-			path:     "/v1/projects/p/locations/us-central1/cachedContents/abc123",
-			expected: map[string]string{"x-aigw-endpoint": "cachedContents"},
+			name:     "vertex ai asia-northeast3 by id extracts region",
+			path:     "/v1/projects/p/locations/asia-northeast3/cachedContents/abc123",
+			expected: map[string]string{"x-aigw-endpoint": "cachedContents", "x-aigw-region": "asia-northeast3"},
+		},
+		{
+			name:     "vertex ai global region extracts region",
+			path:     "/v1/projects/p/locations/global/cachedContents",
+			expected: map[string]string{"x-aigw-endpoint": "cachedContents", "x-aigw-region": "global"},
 		},
 		{
 			name:     "with query params",
 			path:     "/v1/projects/p/locations/us-central1/cachedContents?pageSize=10",
-			expected: map[string]string{"x-aigw-endpoint": "cachedContents"},
+			expected: map[string]string{"x-aigw-endpoint": "cachedContents", "x-aigw-region": "us-central1"},
 		},
 		{
 			name:     "generateContent path does NOT match",

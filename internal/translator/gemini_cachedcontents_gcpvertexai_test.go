@@ -16,31 +16,80 @@ import (
 )
 
 func TestGeminiCachedContents_RequestBody(t *testing.T) {
-	tr := NewGeminiCachedContentsToGCPVertexAITranslator()
+	newTr := func() *geminiCachedContentsToGCPVertexAITranslator {
+		return NewGeminiCachedContentsToGCPVertexAITranslator().(*geminiCachedContentsToGCPVertexAITranslator)
+	}
 
-	t.Run("forceBodyMutation=false returns no headers/body", func(t *testing.T) {
-		// The processor will forward the original bytes when the translator returns nil.
-		headers, body, err := tr.RequestBody([]byte(`{"model":"gemini-1.5-pro"}`), &gcp.CachedContentRequest{Model: "gemini-1.5-pro"}, false)
+	t.Run("rewrites path to suffix that backend will prefix", func(t *testing.T) {
+		tr := newTr()
+		tr.SetRequestHeaders(map[string]string{
+			":path": "/v1/projects/my-project/locations/global/cachedContents",
+		})
+		headers, body, err := tr.RequestBody([]byte(`{"model":"gemini-2.5-flash"}`), &gcp.CachedContentRequest{Model: "gemini-2.5-flash"}, true)
 		require.NoError(t, err)
-		require.Nil(t, headers)
-		require.Nil(t, body)
+		// First header must be the rewritten :path with project/location stripped.
+		require.Equal(t, pathHeaderName, headers[0][0])
+		require.Equal(t, "cachedContents", headers[0][1])
+		require.Equal(t, []byte(`{"model":"gemini-2.5-flash"}`), body)
 	})
 
-	t.Run("forceBodyMutation=true returns original body with content-length", func(t *testing.T) {
-		raw := []byte(`{"model":"gemini-1.5-pro","ttl":"3600s"}`)
-		headers, body, err := tr.RequestBody(raw, &gcp.CachedContentRequest{Model: "gemini-1.5-pro", TTL: "3600s"}, true)
+	t.Run("preserves trailing cache id segment", func(t *testing.T) {
+		tr := newTr()
+		tr.SetRequestHeaders(map[string]string{
+			":path": "/v1/projects/p/locations/us-central1/cachedContents/abc123",
+		})
+		headers, _, err := tr.RequestBody(nil, &gcp.CachedContentRequest{}, false)
+		require.NoError(t, err)
+		require.Equal(t, "cachedContents/abc123", headers[0][1])
+	})
+
+	t.Run("preserves query parameters (updateMask, pageSize)", func(t *testing.T) {
+		tr := newTr()
+		tr.SetRequestHeaders(map[string]string{
+			":path": "/v1/projects/p/locations/global/cachedContents/abc?updateMask=ttl",
+		})
+		headers, _, err := tr.RequestBody(nil, &gcp.CachedContentRequest{}, false)
+		require.NoError(t, err)
+		require.Equal(t, "cachedContents/abc?updateMask=ttl", headers[0][1])
+	})
+
+	t.Run("forceBodyMutation=true with body includes content-length header", func(t *testing.T) {
+		tr := newTr()
+		tr.SetRequestHeaders(map[string]string{
+			":path": "/v1/projects/p/locations/global/cachedContents",
+		})
+		raw := []byte(`{"ttl":"3600s"}`)
+		headers, body, err := tr.RequestBody(raw, &gcp.CachedContentRequest{TTL: "3600s"}, true)
 		require.NoError(t, err)
 		require.Equal(t, raw, body)
-		require.Len(t, headers, 1)
-		require.Equal(t, contentLengthHeaderName, headers[0][0])
+		require.Len(t, headers, 2)
+		require.Equal(t, pathHeaderName, headers[0][0])
+		require.Equal(t, contentLengthHeaderName, headers[1][0])
 	})
 
-	t.Run("forceBodyMutation=true with empty body returns nothing", func(t *testing.T) {
-		// GET/DELETE have empty bodies; nothing to mutate even with forceBodyMutation.
-		headers, body, err := tr.RequestBody(nil, &gcp.CachedContentRequest{}, true)
+	t.Run("forceBodyMutation=false omits body and content-length", func(t *testing.T) {
+		tr := newTr()
+		tr.SetRequestHeaders(map[string]string{
+			":path": "/v1/projects/p/locations/global/cachedContents",
+		})
+		headers, body, err := tr.RequestBody([]byte(`{"x":1}`), &gcp.CachedContentRequest{}, false)
 		require.NoError(t, err)
-		require.Nil(t, headers)
 		require.Nil(t, body)
+		require.Len(t, headers, 1)
+		require.Equal(t, pathHeaderName, headers[0][0])
+	})
+
+	t.Run("missing :path returns error", func(t *testing.T) {
+		tr := newTr()
+		_, _, err := tr.RequestBody(nil, &gcp.CachedContentRequest{}, false)
+		require.ErrorContains(t, err, "missing request path")
+	})
+
+	t.Run("path without /cachedContents returns error", func(t *testing.T) {
+		tr := newTr()
+		tr.SetRequestHeaders(map[string]string{":path": "/v1/projects/p/locations/global/something-else"})
+		_, _, err := tr.RequestBody(nil, &gcp.CachedContentRequest{}, false)
+		require.ErrorContains(t, err, "unexpected cachedContents path")
 	})
 }
 
@@ -53,19 +102,18 @@ func TestGeminiCachedContents_ResponseHeaders(t *testing.T) {
 
 func TestGeminiCachedContents_ResponseBody(t *testing.T) {
 	tr := NewGeminiCachedContentsToGCPVertexAITranslator()
-	body := strings.NewReader(`{"name":"projects/p/locations/us-central1/cachedContents/abc123","model":"projects/p/locations/us-central1/publishers/google/models/gemini-1.5-pro"}`)
+	body := strings.NewReader(`{"name":"projects/p/locations/us-central1/cachedContents/abc123"}`)
 	headers, mutated, usage, model, err := tr.ResponseBody(nil, body, true, nil)
 	require.NoError(t, err)
 	require.Nil(t, headers)
 	require.Nil(t, mutated)
-	require.Equal(t, uint32(0), func() uint32 { v, _ := usage.InputTokens(); return v }())
+	_, ok := usage.InputTokens()
+	require.False(t, ok, "passthrough must not set input tokens")
 	require.Empty(t, model)
 }
 
 func TestGeminiCachedContents_ResponseError(t *testing.T) {
 	tr := NewGeminiCachedContentsToGCPVertexAITranslator()
-	// Error path delegates to convertGCPVertexAIErrorToOpenAI; smoke-test it does not panic
-	// and returns a non-nil body.
 	headers, body, err := tr.ResponseError(
 		map[string]string{"content-type": "application/json"},
 		bytes.NewReader([]byte(`{"error":{"code":404,"message":"not found","status":"NOT_FOUND"}}`)),

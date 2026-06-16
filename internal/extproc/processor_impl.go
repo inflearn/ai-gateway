@@ -161,6 +161,40 @@ func newUpstreamProcessor[ReqT, RespT, RespChunkT any, EndpointSpecT endpointspe
 	}
 }
 
+// ProcessRequestHeaders implements [Processor.ProcessRequestHeaders].
+//
+// For body-less requests (GET / DELETE / HEAD) the upstream filter never invokes
+// ProcessRequestBody, so any synthetic headers the prefix router wrote into the local
+// requestHeaders map (x-aigw-endpoint, x-aigw-region) would never reach Envoy and
+// AIGatewayRoute matching on those headers would fail. Emit a SetHeaders mutation here so
+// the router sees them. Body-carrying requests will set the same headers again in
+// ProcessRequestBody — the mutation is idempotent.
+func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequestHeaders(ctx context.Context, hm *corev3.HeaderMap) (*extprocv3.ProcessingResponse, error) {
+	var additionalHeaders []*corev3.HeaderValueOption
+	for _, h := range []string{"x-aigw-endpoint", "x-aigw-region"} {
+		if v := r.requestHeaders[h]; v != "" {
+			additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
+				Header: &corev3.HeaderValue{Key: h, RawValue: []byte(v)},
+			})
+		}
+	}
+	if len(additionalHeaders) == 0 {
+		return r.passThroughProcessor.ProcessRequestHeaders(ctx, hm)
+	}
+	return &extprocv3.ProcessingResponse{
+		Response: &extprocv3.ProcessingResponse_RequestHeaders{
+			RequestHeaders: &extprocv3.HeadersResponse{
+				Response: &extprocv3.CommonResponse{
+					HeaderMutation: &extprocv3.HeaderMutation{
+						SetHeaders: additionalHeaders,
+					},
+					ClearRouteCache: true,
+				},
+			},
+		},
+	}, nil
+}
+
 // ProcessResponseHeaders implements [Processor.ProcessResponseHeaders].
 func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessResponseHeaders(ctx context.Context, headerMap *corev3.HeaderMap) (*extprocv3.ProcessingResponse, error) {
 	// If the request failed to route and/or immediate response was returned before the upstream filter was set,

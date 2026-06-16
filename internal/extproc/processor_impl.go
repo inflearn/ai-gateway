@@ -323,6 +323,17 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequest
 		AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 		Header:       &corev3.HeaderValue{Key: internalapi.EnvoyOriginalPathHeader, RawValue: []byte(originalPath)},
 	})
+	// Propagate synthetic prefix-router headers (x-aigw-endpoint, x-aigw-region) into the
+	// HeaderMutation response so they reach Envoy's router and can drive AIGatewayRoute
+	// header-based matching. The prefix matcher in server.go writes these into the local
+	// requestHeaders map, but Envoy only sees what we explicitly return via SetHeaders.
+	for _, h := range []string{"x-aigw-endpoint", "x-aigw-region"} {
+		if v := r.requestHeaders[h]; v != "" {
+			additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
+				Header: &corev3.HeaderValue{Key: h, RawValue: []byte(v)},
+			})
+		}
+	}
 	r.originalModel = originalModel
 	r.originalRequestBody = body
 	r.stream = stream

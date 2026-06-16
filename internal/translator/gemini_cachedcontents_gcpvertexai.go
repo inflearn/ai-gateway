@@ -63,24 +63,17 @@ func NewGeminiCachedContentsToGCPVertexAITranslator(modelNameOverride internalap
 // RequestBody implements [GeminiCachedContentsTranslator.RequestBody].
 //
 // For cachedContents POST/PATCH the body's "model" field must be a fully-qualified Vertex
-// resource. We also patch in any missing "role" on contents items — Vertex rejects content
-// entries that omit the role, but many clients (incl. the Java GenAI SDK in some configurations)
-// send role-less parts.
-//
-// Steps applied to the original body bytes (sjson, leaving everything else untouched):
+// resource. We:
 //  1. Apply modelNameOverride (e.g. alias gemini-1.5-pro → gemini-1.5-pro-preview).
-//  2. If GCP_PROJECT and GCP_LOCATION are set in the environment, expand the short model form
-//     into "projects/{GCP_PROJECT}/locations/{GCP_LOCATION}/publishers/google/models/{m}".
-//  3. Default any contents[i].role to "user" when missing.
+//  2. If GCP_PROJECT and GCP_LOCATION are set in the environment, expand whatever short form
+//     the client sent (or the override produced) into
+//     "projects/{GCP_PROJECT}/locations/{GCP_LOCATION}/publishers/google/models/{m}".
 //
-// Falls back to the previous behaviour gracefully when env vars are unset or when the body
-// carries no model/contents.
+// When the env vars are unset (unit tests, fresh dev clusters) we fall back to the previous
+// behaviour — only modelNameOverride is applied, leaving any normalisation to the backend.
 func (g *geminiCachedContentsToGCPVertexAITranslator) RequestBody(
 	original []byte, body *gcp.CachedContentRequest, forceBodyMutation bool,
 ) (newHeaders []internalapi.Header, newBody []byte, err error) {
-	current := original
-
-	// Step 1+2: normalise model field.
 	if body != nil && body.Model != "" {
 		desired := body.Model
 		if g.modelNameOverride != "" {
@@ -88,30 +81,13 @@ func (g *geminiCachedContentsToGCPVertexAITranslator) RequestBody(
 		}
 		desired = expandToVertexFullModelPath(desired, os.Getenv(envGCPProject), os.Getenv(envGCPLocation))
 		if desired != body.Model {
-			current, err = sjson.SetBytesOptions(current, "model", desired, sjsonOptions)
+			newBody, err = sjson.SetBytesOptions(original, "model", desired, sjsonOptions)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to normalise cachedContents body model: %w", err)
 			}
 		}
 	}
-
-	// Step 3: default missing contents[i].role to "user".
-	if body != nil {
-		for i, content := range body.Contents {
-			if content.Role == "" {
-				current, err = sjson.SetBytesOptions(current, fmt.Sprintf("contents.%d.role", i), "user", sjsonOptions)
-				if err != nil {
-					return nil, nil, fmt.Errorf("failed to default contents[%d].role: %w", i, err)
-				}
-			}
-		}
-	}
-
-	bodyChanged := len(current) != len(original) || (len(current) > 0 && string(current) != string(original))
-	switch {
-	case bodyChanged:
-		newBody = current
-	case forceBodyMutation && len(original) > 0:
+	if forceBodyMutation && len(newBody) == 0 && len(original) > 0 {
 		newBody = original
 	}
 	if len(newBody) > 0 {

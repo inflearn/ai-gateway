@@ -88,9 +88,18 @@ func (g *gcpHandler) Do(_ context.Context, requestHeaders map[string]string, _ [
 	}
 
 	var newPath string
-	if strings.HasPrefix(path, "/v1/projects/") {
+	switch {
+	case strings.HasPrefix(path, "/v1/projects/"):
+		// Client already supplied a full Vertex path — leave it alone.
 		newPath = path
-	} else {
+	case strings.HasPrefix(path, "/"):
+		// Suffix that includes a leading slash (e.g. "/cachedContents?pageSize=10"
+		// after the router rewrites "/v1beta/cachedContents?..."). Concatenating with
+		// the prefix as-is yields one separator slash.
+		newPath = prefixPath + path
+	default:
+		// Translator-style suffix without a leading slash
+		// (e.g. "publishers/google/models/X:generateContent").
 		newPath = fmt.Sprintf("%s/%s", prefixPath, path)
 	}
 

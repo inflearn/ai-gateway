@@ -535,23 +535,44 @@ func extractGeminiPathInfo(rawPath string) map[string]string {
 }
 
 // extractGeminiCachedContentsPathInfo recognises Gemini cachedContents management paths and
-// returns a synthetic "x-aigw-endpoint=cachedContents" header so AIGatewayRoute can route the
-// request on that header. Returns nil for paths that are not cachedContents — the server then
-// falls through to the next registered prefix entry.
+// returns synthetic headers so AIGatewayRoute can route the request:
+//   - x-aigw-endpoint=cachedContents — set for any cachedContents path.
+//   - x-aigw-region=<region>          — set only for Vertex AI paths, extracted from
+//     /v1/projects/{p}/locations/{region}/cachedContents. The Gemini Developer API path
+//     (/v1beta/cachedContents) has no region segment, so this header is omitted there;
+//     route rules should treat the absence as "developer API" or use a default backend.
 //
-// Supported paths:
-//   - /v1beta/cachedContents[/{cache_id}]
-//   - /v1/projects/{project}/locations/{location}/cachedContents[/{cache_id}]
+// Returns nil for paths that are not cachedContents — the server falls through to the next
+// registered prefix entry.
 func extractGeminiCachedContentsPathInfo(rawPath string) map[string]string {
 	p := rawPath
 	if q := strings.Index(p, "?"); q != -1 {
 		p = p[:q]
 	}
-	// Match either the v1beta developer API or the Vertex AI v1 path.
 	if !strings.Contains(p, "/cachedContents") {
 		return nil
 	}
-	return map[string]string{"x-aigw-endpoint": "cachedContents"}
+	result := map[string]string{"x-aigw-endpoint": "cachedContents"}
+	if region := extractVertexRegion(p); region != "" {
+		result["x-aigw-region"] = region
+	}
+	return result
+}
+
+// extractVertexRegion pulls the location segment out of a Vertex AI path. Returns "" if the
+// path does not contain "/locations/{region}/".
+func extractVertexRegion(p string) string {
+	const seg = "/locations/"
+	idx := strings.Index(p, seg)
+	if idx == -1 {
+		return ""
+	}
+	after := p[idx+len(seg):]
+	slash := strings.Index(after, "/")
+	if slash == -1 {
+		return ""
+	}
+	return after[:slash]
 }
 
 func listen(ctx context.Context, name, network, address string) (net.Listener, error) {

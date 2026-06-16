@@ -164,17 +164,37 @@ func newUpstreamProcessor[ReqT, RespT, RespChunkT any, EndpointSpecT endpointspe
 // ProcessRequestHeaders implements [Processor.ProcessRequestHeaders].
 //
 // For body-less requests (GET / DELETE / HEAD) the upstream filter never invokes
-// ProcessRequestBody, so any synthetic headers the prefix router wrote into the local
-// requestHeaders map (x-aigw-endpoint, x-aigw-region) would never reach Envoy and
-// AIGatewayRoute matching on those headers would fail. Emit a SetHeaders mutation here so
-// the router sees them. Body-carrying requests will set the same headers again in
-// ProcessRequestBody — the mutation is idempotent.
+// ProcessRequestBody, so headers normally set there — x-aigw-endpoint, x-aigw-region
+// (for AIGatewayRoute matching) plus x-ai-eg-original-path / x-envoy-original-path
+// (used by processorForPath in the upstream-filter stage to look up the right
+// EndpointSpec) — would never reach Envoy. Emit them here so body-less requests
+// flow through the same routing + upstream-filter pipeline as POST. Body-carrying
+// requests run this method too, then run ProcessRequestBody which re-emits the same
+// keys; mutations are idempotent.
 func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequestHeaders(ctx context.Context, hm *corev3.HeaderMap) (*extprocv3.ProcessingResponse, error) {
 	var additionalHeaders []*corev3.HeaderValueOption
 	for _, h := range []string{"x-aigw-endpoint", "x-aigw-region"} {
 		if v := r.requestHeaders[h]; v != "" {
 			additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
 				Header: &corev3.HeaderValue{Key: h, RawValue: []byte(v)},
+			})
+		}
+	}
+	// The upstream-filter stage looks up its processor by x-ai-eg-original-path
+	// (see processorForPath). Without this header the upstream filter has no way to
+	// pick the right EndpointSpec and the request stalls. Mirror ProcessRequestBody's
+	// behaviour so body-less requests don't lose the path.
+	if originalPath := r.requestHeaders[":path"]; originalPath != "" {
+		if r.requestHeaders[originalPathHeader] == "" {
+			r.requestHeaders[originalPathHeader] = originalPath
+			additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
+				Header: &corev3.HeaderValue{Key: originalPathHeader, RawValue: []byte(originalPath)},
+			})
+		}
+		if r.requestHeaders[internalapi.EnvoyOriginalPathHeader] == "" {
+			r.requestHeaders[internalapi.EnvoyOriginalPathHeader] = originalPath
+			additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
+				Header: &corev3.HeaderValue{Key: internalapi.EnvoyOriginalPathHeader, RawValue: []byte(originalPath)},
 			})
 		}
 	}

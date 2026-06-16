@@ -145,6 +145,24 @@ func TestGeminiToGCPVertexAITranslator_RequestBody(t *testing.T) {
 		require.Equal(t, contentLengthHeaderName, headers[1].Key())
 		require.Equal(t, fmt.Sprintf("%d", len(body)), headers[1].Value())
 	})
+
+	t.Run("cachedContent field is preserved in the request body", func(t *testing.T) {
+		tr := NewGeminiToGCPVertexAITranslator("").(*geminiToGCPVertexAITranslator)
+		const cacheName = "projects/p/locations/us-central1/cachedContents/abc123"
+		req := &gcp.GenerateContentRequest{
+			Model:         "gemini-1.5-pro",
+			CachedContent: cacheName,
+			Contents: []genai.Content{
+				{Parts: []*genai.Part{{Text: "follow-up question"}}, Role: "user"},
+			},
+		}
+		rawBody, err := json.Marshal(req)
+		require.NoError(t, err)
+
+		_, body, err := tr.RequestBody(rawBody, req, false)
+		require.NoError(t, err)
+		require.Contains(t, string(body), `"cachedContent":"`+cacheName+`"`)
+	})
 }
 
 // TestGeminiToGCPVertexAITranslator_ResponseHeaders tests the ResponseHeaders method.

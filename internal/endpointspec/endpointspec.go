@@ -119,6 +119,11 @@ type (
 	// Model and stream flag are extracted from the request path by the server and injected
 	// as synthetic headers; ParseBody returns empty model and stream=false intentionally.
 	GeminiGenerateContentEndpointSpec struct{}
+	// GeminiCachedContentsEndpointSpec implements EndpointSpec for Gemini cachedContents
+	// management API (/v1beta/cachedContents and /v1/projects/{p}/locations/{l}/cachedContents).
+	// Used for explicit context cache CRUD (POST/GET/PATCH/DELETE). The request body is parsed
+	// best-effort: POST/PATCH carry a CachedContentRequest, GET/DELETE carry no body.
+	GeminiCachedContentsEndpointSpec struct{}
 	// TranscriptionEndpointSpec implements EndpointSpec for /v1/audio/transcriptions.
 	TranscriptionEndpointSpec struct{}
 	// TranslationEndpointSpec implements EndpointSpec for /v1/audio/translations.
@@ -533,6 +538,44 @@ func (GeminiGenerateContentEndpointSpec) GetTranslator(schema filterapi.Versione
 
 // RedactSensitiveInfoFromRequest implements [EndpointSpec.RedactSensitiveInfoFromRequest].
 func (GeminiGenerateContentEndpointSpec) RedactSensitiveInfoFromRequest(req *gcpschema.GenerateContentRequest) (redactedReq *gcpschema.GenerateContentRequest, err error) {
+	return req, nil
+}
+
+// ParseBody implements [Spec.ParseBody] for cachedContents management requests.
+// POST/PATCH carry a JSON CachedContentRequest body; GET/DELETE bodies are empty.
+// Empty bodies parse to a zero-value request so the processor can still dispatch.
+func (GeminiCachedContentsEndpointSpec) ParseBody(
+	body []byte,
+	_ bool,
+) (internalapi.OriginalModel, *gcpschema.CachedContentRequest, bool, []byte, error) {
+	var req gcpschema.CachedContentRequest
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &req); err != nil {
+			return "", nil, false, nil, fmt.Errorf("%w: failed to parse JSON for cachedContents: %w", internalapi.ErrMalformedRequest, err)
+		}
+	}
+	// cachedContents is never streamed. Model is best-effort — POST has it, GET/DELETE do not.
+	return internalapi.OriginalModel(req.Model), &req, false, nil, nil
+}
+
+// ParseMultipartBody implements [Spec.ParseMultipartBody]. cachedContents is JSON-only.
+func (GeminiCachedContentsEndpointSpec) ParseMultipartBody([]byte, string, bool) (internalapi.OriginalModel, *gcpschema.CachedContentRequest, bool, []byte, error) {
+	return "", nil, false, nil, errMultipartNotSupported
+}
+
+// GetTranslator implements [EndpointSpec.GetTranslator].
+func (GeminiCachedContentsEndpointSpec) GetTranslator(schema filterapi.VersionedAPISchema, _ string) (translator.GeminiCachedContentsTranslator, error) {
+	switch schema.Name {
+	case filterapi.APISchemaGCPVertexAI:
+		return translator.NewGeminiCachedContentsToGCPVertexAITranslator(), nil
+	default:
+		return nil, fmt.Errorf("unsupported API schema for Gemini cachedContents: backend=%s", schema)
+	}
+}
+
+// RedactSensitiveInfoFromRequest implements [EndpointSpec.RedactSensitiveInfoFromRequest].
+// Cached content is developer-supplied prompt material; not redacted for debug logs.
+func (GeminiCachedContentsEndpointSpec) RedactSensitiveInfoFromRequest(req *gcpschema.CachedContentRequest) (redactedReq *gcpschema.CachedContentRequest, err error) {
 	return req, nil
 }
 

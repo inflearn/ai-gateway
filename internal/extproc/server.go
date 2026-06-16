@@ -107,7 +107,15 @@ func (s *Server) Register(path string, newProcessor ProcessorFactory) {
 // RegisterPrefix registers a processor factory for all request paths that start
 // with the given prefix.  pathExtract is called with the full path to produce
 // synthetic headers (e.g. "x-aigw-path-model") that are injected into the
-// request headers map before the factory is invoked.  pathExtract may be nil.
+// request headers map before the factory is invoked.
+//
+// pathExtract has three roles:
+//   - nil: the entry matches any path with the prefix; no synthetic headers are injected.
+//   - returns non-nil map: the entry matches and these headers are injected.
+//   - returns nil map: the entry does NOT match — processorForPath falls through to the
+//     next registered prefix entry. This allows two different endpoints to share an
+//     overlapping prefix (e.g. /v1/projects/ for both Gemini generateContent and
+//     cachedContents) and disambiguate via path inspection.
 func (s *Server) RegisterPrefix(prefix string, newProcessor ProcessorFactory, pathExtract func(string) map[string]string) {
 	s.logger.Info("Registering prefix processor", slog.String("prefix", prefix))
 	s.prefixFactories = append(s.prefixFactories, prefixEntry{
@@ -138,16 +146,24 @@ func (s *Server) processorForPath(requestHeaders map[string]string, isUpstreamFi
 		return newProcessor(s.config, requestHeaders, logger, isUpstreamFilter, s.enableRedaction)
 	}
 
-	// 2. Prefix match (first registered prefix wins).
+	// 2. Prefix match. Iterate entries in registration order; the first whose pathExtract
+	// either is nil or returns a non-nil map wins. A non-nil pathExtract returning nil
+	// signals "prefix matched but this is not my path" — try the next entry.
 	for _, entry := range s.prefixFactories {
-		if strings.HasPrefix(path, entry.prefix) {
-			if entry.pathExtract != nil {
-				for k, v := range entry.pathExtract(path) {
-					requestHeaders[k] = v
-				}
-			}
+		if !strings.HasPrefix(path, entry.prefix) {
+			continue
+		}
+		if entry.pathExtract == nil {
 			return entry.factory(s.config, requestHeaders, logger, isUpstreamFilter, s.enableRedaction)
 		}
+		synthetic := entry.pathExtract(path)
+		if synthetic == nil {
+			continue
+		}
+		for k, v := range synthetic {
+			requestHeaders[k] = v
+		}
+		return entry.factory(s.config, requestHeaders, logger, isUpstreamFilter, s.enableRedaction)
 	}
 
 	return nil, fmt.Errorf("%w: %s", errNoProcessor, path)

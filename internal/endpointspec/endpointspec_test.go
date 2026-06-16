@@ -1511,4 +1511,58 @@ func TestParseMultipartBody_RejectsJSONOnlyEndpoints(t *testing.T) {
 
 	_, _, _, _, err = GeminiGenerateContentEndpointSpec{}.ParseMultipartBody(nil, "", false)
 	require.ErrorContains(t, err, "multipart body not supported")
+
+	_, _, _, _, err = GeminiCachedContentsEndpointSpec{}.ParseMultipartBody(nil, "", false)
+	require.ErrorContains(t, err, "multipart body not supported")
+}
+
+func TestGeminiCachedContentsEndpointSpec_ParseBody(t *testing.T) {
+	spec := GeminiCachedContentsEndpointSpec{}
+
+	t.Run("empty body (GET/DELETE) returns zero value", func(t *testing.T) {
+		model, req, stream, mutated, err := spec.ParseBody(nil, false)
+		require.NoError(t, err)
+		require.Equal(t, "", string(model))
+		require.NotNil(t, req)
+		require.False(t, stream)
+		require.Nil(t, mutated)
+	})
+
+	t.Run("POST body with model extracts model", func(t *testing.T) {
+		body := []byte(`{"model":"projects/p/locations/us-central1/publishers/google/models/gemini-1.5-pro","ttl":"3600s"}`)
+		model, req, stream, _, err := spec.ParseBody(body, false)
+		require.NoError(t, err)
+		require.Equal(t, "projects/p/locations/us-central1/publishers/google/models/gemini-1.5-pro", string(model))
+		require.NotNil(t, req)
+		require.Equal(t, "3600s", req.TTL)
+		require.False(t, stream)
+	})
+
+	t.Run("invalid JSON returns malformed request", func(t *testing.T) {
+		_, _, _, _, err := spec.ParseBody([]byte("{not json"), false)
+		require.ErrorContains(t, err, "malformed request")
+	})
+}
+
+func TestGeminiCachedContentsEndpointSpec_GetTranslator(t *testing.T) {
+	spec := GeminiCachedContentsEndpointSpec{}
+
+	t.Run("GCPVertexAI supported", func(t *testing.T) {
+		tr, err := spec.GetTranslator(filterapi.VersionedAPISchema{Name: filterapi.APISchemaGCPVertexAI}, "")
+		require.NoError(t, err)
+		require.NotNil(t, tr)
+	})
+
+	t.Run("unsupported schema returns error", func(t *testing.T) {
+		_, err := spec.GetTranslator(filterapi.VersionedAPISchema{Name: filterapi.APISchemaOpenAI}, "")
+		require.ErrorContains(t, err, "unsupported API schema for Gemini cachedContents")
+	})
+}
+
+func TestGeminiCachedContentsEndpointSpec_RedactSensitiveInfoFromRequest(t *testing.T) {
+	spec := GeminiCachedContentsEndpointSpec{}
+	req := &gcpschema.CachedContentRequest{Model: "gemini-1.5-pro", TTL: "60s"}
+	redacted, err := spec.RedactSensitiveInfoFromRequest(req)
+	require.NoError(t, err)
+	require.Equal(t, req, redacted)
 }

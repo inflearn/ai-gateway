@@ -1084,3 +1084,70 @@ func TestServer_RegisterPrefix_SyntheticHeadersInjected(t *testing.T) {
 	require.NotNil(t, capturedHeaders)
 	require.Equal(t, "gemini-2.0-flash", capturedHeaders["x-aigw-path-model"])
 }
+
+// TestServer_RegisterPrefix_FallbackToNextEntry verifies that when two prefix entries share an
+// overlapping prefix, a non-nil pathExtract returning nil falls through to the next entry.
+// This is what lets Gemini generateContent (/v1/projects/.../models/{m}:...) and cachedContents
+// (/v1/projects/.../cachedContents) coexist under the same /v1/projects/ prefix.
+func TestServer_RegisterPrefix_FallbackToNextEntry(t *testing.T) {
+	s, err := NewServer(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})), false)
+	require.NoError(t, err)
+	require.NotNil(t, s)
+	s.config = &filterapi.RuntimeConfig{}
+
+	modelsProc := &mockProcessor{}
+	s.RegisterPrefix("/v1/projects/", func(*filterapi.RuntimeConfig, map[string]string, *slog.Logger, bool, bool) (Processor, error) {
+		return modelsProc, nil
+	}, func(path string) map[string]string {
+		// Models endpoint matches when path contains "/models/" and a colon method.
+		const seg = "/models/"
+		idx := strings.LastIndex(path, seg)
+		if idx == -1 {
+			return nil
+		}
+		after := path[idx+len(seg):]
+		if !strings.Contains(after, ":") {
+			return nil
+		}
+		return map[string]string{"x-aigw-path-model": after[:strings.Index(after, ":")]}
+	})
+
+	cacheProc := &mockProcessor{}
+	s.RegisterPrefix("/v1/projects/", func(*filterapi.RuntimeConfig, map[string]string, *slog.Logger, bool, bool) (Processor, error) {
+		return cacheProc, nil
+	}, func(path string) map[string]string {
+		if !strings.Contains(path, "/cachedContents") {
+			return nil
+		}
+		return map[string]string{"x-aigw-endpoint": "cachedContents"}
+	})
+
+	tests := []struct {
+		name       string
+		path       string
+		expectProc Processor
+	}{
+		{
+			name:       "models path goes to first entry",
+			path:       "/v1/projects/p/locations/us-central1/publishers/google/models/gemini-1.5-pro:generateContent",
+			expectProc: modelsProc,
+		},
+		{
+			name:       "cachedContents path falls through to second entry",
+			path:       "/v1/projects/p/locations/us-central1/cachedContents",
+			expectProc: cacheProc,
+		},
+		{
+			name:       "cachedContents path with id",
+			path:       "/v1/projects/p/locations/us-central1/cachedContents/abc123",
+			expectProc: cacheProc,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			proc, err := s.processorForPath(map[string]string{":path": tt.path}, false, slog.Default())
+			require.NoError(t, err)
+			require.Equal(t, tt.expectProc, proc)
+		})
+	}
+}

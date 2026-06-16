@@ -363,3 +363,53 @@ func TestExtractGeminiPathInfo(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractGeminiCachedContentsPathInfo(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		expected map[string]string
+	}{
+		{
+			name:     "dev api list/create",
+			path:     "/v1beta/cachedContents",
+			expected: map[string]string{"x-aigw-endpoint": "cachedContents"},
+		},
+		{
+			name:     "dev api get/patch/delete by id",
+			path:     "/v1beta/cachedContents/abc123",
+			expected: map[string]string{"x-aigw-endpoint": "cachedContents"},
+		},
+		{
+			name:     "vertex ai list/create",
+			path:     "/v1/projects/p/locations/us-central1/cachedContents",
+			expected: map[string]string{"x-aigw-endpoint": "cachedContents"},
+		},
+		{
+			name:     "vertex ai by id",
+			path:     "/v1/projects/p/locations/us-central1/cachedContents/abc123",
+			expected: map[string]string{"x-aigw-endpoint": "cachedContents"},
+		},
+		{
+			name:     "with query params",
+			path:     "/v1/projects/p/locations/us-central1/cachedContents?pageSize=10",
+			expected: map[string]string{"x-aigw-endpoint": "cachedContents"},
+		},
+		{
+			name:     "generateContent path does NOT match",
+			path:     "/v1/projects/p/locations/us-central1/publishers/google/models/gemini-1.5-pro:generateContent",
+			expected: nil,
+		},
+		{
+			name:     "unrelated path returns nil",
+			path:     "/v1/chat/completions",
+			expected: nil,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractGeminiCachedContentsPathInfo(tc.path)
+			require.Equal(t, tc.expected, got)
+		})
+	}
+}

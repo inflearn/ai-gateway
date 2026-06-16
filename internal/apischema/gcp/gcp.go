@@ -39,6 +39,11 @@ type GenerateContentRequest struct {
 	//
 	// https://github.com/googleapis/go-genai/blob/6a8184fcaf8bf15f0c566616a7b356560309be9b/types.go#L1057
 	SafetySettings []*genai.SafetySetting `json:"safetySettings,omitempty"`
+	// Optional. CachedContent is the resource name of a pre-created cached content to use for this request.
+	// Vertex AI format: "projects/{project}/locations/{location}/cachedContents/{cache_id}".
+	// Gemini Developer API format: "cachedContents/{cache_id}".
+	// See https://cloud.google.com/vertex-ai/generative-ai/docs/context-cache/context-cache-overview
+	CachedContent string `json:"cachedContent,omitempty"`
 
 	// Model is an AI Gateway internal field extracted from the request path (e.g.
 	// /v1beta/models/{model}:generateContent). It is never serialised to JSON.
@@ -113,4 +118,33 @@ type Prediction struct {
 // https://github.com/googleapis/python-aiplatform/blob/30e41d01f3fd0ef08da6ad6eb7f83df34476105e/google/cloud/aiplatform_v1/types/prediction_service.py#L117
 type PredictResponse struct {
 	Predictions []*Prediction `json:"predictions"`
+}
+
+// CachedContentRequest is the request body for the cachedContents API (POST/PATCH).
+// All fields are optional because GET/DELETE send no body and PATCH only updates ttl/displayName/expireTime.
+//
+// Vertex AI: POST /v1/projects/{project}/locations/{location}/cachedContents
+// Gemini Developer API: POST /v1beta/cachedContents
+// See https://cloud.google.com/vertex-ai/docs/reference/rest/v1/projects.locations.cachedContents
+type CachedContentRequest struct {
+	// Model is the fully-qualified model resource name. For Vertex AI:
+	// "projects/{project}/locations/{location}/publishers/google/models/{model}".
+	// For Gemini Developer API: "models/{model}".
+	Model string `json:"model,omitempty"`
+	// Contents holds the cached prompt content.
+	Contents []genai.Content `json:"contents,omitempty"`
+	// SystemInstruction is the optional system prompt to cache.
+	SystemInstruction *genai.Content `json:"systemInstruction,omitempty"`
+	// Tools to cache alongside the content.
+	Tools []genai.Tool `json:"tools,omitempty"`
+	// ToolConfig to cache.
+	ToolConfig *genai.ToolConfig `json:"toolConfig,omitempty"`
+	// TTL is the time-to-live as a duration string (e.g. "3600s"). Either TTL or ExpireTime may be set.
+	TTL string `json:"ttl,omitempty"`
+	// ExpireTime is an RFC3339 timestamp for when the cache should expire.
+	ExpireTime string `json:"expireTime,omitempty"`
+	// DisplayName is a human-readable label for the cache entry.
+	DisplayName string `json:"displayName,omitempty"`
+	// Name is populated on responses; it is the fully-qualified resource name of the cache entry.
+	Name string `json:"name,omitempty"`
 }

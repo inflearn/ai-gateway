@@ -6,10 +6,8 @@
 package translator
 
 import (
-	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
 	"github.com/envoyproxy/ai-gateway/internal/apischema/gcp"
 	"github.com/envoyproxy/ai-gateway/internal/internalapi"
@@ -24,62 +22,37 @@ type GeminiCachedContentsSpan = tracingapi.Span[struct{}, struct{}]
 // GeminiCachedContentsTranslator translates Gemini cachedContents API requests to GCP Vertex AI.
 type GeminiCachedContentsTranslator = Translator[gcp.CachedContentRequest, GeminiCachedContentsSpan]
 
-// geminiCachedContentsToGCPVertexAITranslator forwards cachedContents management calls to GCP
-// Vertex AI. The body is never re-marshalled — only the request path is reduced to the suffix
-// that gcpHandler.Do (in internal/backendauth/gcp.go) will then prepend with
-// "/v1/projects/{project}/locations/{region}".
+// geminiCachedContentsToGCPVertexAITranslator forwards cachedContents management calls (CRUD) to
+// GCP Vertex AI without modifying the request. The full URL — including project, location, and
+// the cachedContents resource path — is sent by the client and preserved end-to-end.
 //
-// Without this rewrite the full path the client sent would be prepended again, producing
-// a doubled URL like "/v1/projects/A/locations/B//v1/projects/X/locations/Y/cachedContents".
-type geminiCachedContentsToGCPVertexAITranslator struct {
-	// originalPath is captured from the incoming :path header via SetRequestHeaders so RequestBody
-	// can strip the project/location prefix before forwarding to the backend.
-	originalPath string
-}
+// Path prefix handling: cachedContents requests arrive with a full
+// "/v1/projects/{p}/locations/{r}/cachedContents/..." path. The shared GCP backend auth handler
+// (internal/backendauth/gcp.go) detects this prefix and skips prepending its configured
+// project/location, so the upstream URL stays exactly as the client sent it. This keeps
+// generateContent's short-suffix convention working untouched while letting cachedContents
+// use full Google-style paths.
+//
+// GET/PATCH/DELETE have no request body — Envoy will not invoke ProcessRequestBody for them, so
+// no translator method runs at all in that case. The unchanged path is enough on its own.
+type geminiCachedContentsToGCPVertexAITranslator struct{}
 
 // NewGeminiCachedContentsToGCPVertexAITranslator creates a passthrough translator for cachedContents.
 func NewGeminiCachedContentsToGCPVertexAITranslator() GeminiCachedContentsTranslator {
 	return &geminiCachedContentsToGCPVertexAITranslator{}
 }
 
-// SetRequestHeaders captures the original request path. Implements [RequestHeadersSetter].
-func (g *geminiCachedContentsToGCPVertexAITranslator) SetRequestHeaders(headers map[string]string) {
-	g.originalPath = headers[":path"]
-}
-
-// RequestBody implements [GeminiCachedContentsTranslator.RequestBody]. It rewrites the request
-// path to the cachedContents suffix (everything from "/cachedContents" onward) so the backend
-// auth handler can prepend the configured project/location prefix.
+// RequestBody implements [GeminiCachedContentsTranslator.RequestBody]. Pure passthrough — no
+// path or body mutation. When forceBodyMutation is set (retry path) we echo the original body
+// back so the upstream filter forwards it.
 func (g *geminiCachedContentsToGCPVertexAITranslator) RequestBody(
 	original []byte, _ *gcp.CachedContentRequest, forceBodyMutation bool,
 ) (newHeaders []internalapi.Header, newBody []byte, err error) {
-	suffix, sErr := extractCachedContentsPathSuffix(g.originalPath)
-	if sErr != nil {
-		return nil, nil, sErr
-	}
-
-	newHeaders = []internalapi.Header{{pathHeaderName, suffix}}
 	if forceBodyMutation && len(original) > 0 {
 		newBody = original
-		newHeaders = append(newHeaders, internalapi.Header{contentLengthHeaderName, strconv.Itoa(len(newBody))})
+		newHeaders = []internalapi.Header{{contentLengthHeaderName, strconv.Itoa(len(newBody))}}
 	}
 	return
-}
-
-// extractCachedContentsPathSuffix strips the "/v1/projects/{p}/locations/{l}" prefix from a
-// Vertex AI cachedContents path and returns the remainder (e.g. "cachedContents/abc?updateMask=ttl").
-// gcpHandler.Do will prepend "/v1/projects/{configured-project}/locations/{configured-region}" to
-// produce the final upstream path.
-func extractCachedContentsPathSuffix(rawPath string) (string, error) {
-	if rawPath == "" {
-		return "", fmt.Errorf("missing request path for cachedContents")
-	}
-	idx := strings.Index(rawPath, "/cachedContents")
-	if idx == -1 {
-		return "", fmt.Errorf("unexpected cachedContents path: %q", rawPath)
-	}
-	// Drop the leading slash so the backend's prefix join yields exactly one slash.
-	return rawPath[idx+1:], nil
 }
 
 // ResponseHeaders implements [GeminiCachedContentsTranslator.ResponseHeaders].

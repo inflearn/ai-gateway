@@ -6,8 +6,10 @@
 package translator
 
 import (
+	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/envoyproxy/ai-gateway/internal/apischema/gcp"
 	"github.com/envoyproxy/ai-gateway/internal/internalapi"
@@ -22,27 +24,62 @@ type GeminiCachedContentsSpan = tracingapi.Span[struct{}, struct{}]
 // GeminiCachedContentsTranslator translates Gemini cachedContents API requests to GCP Vertex AI.
 type GeminiCachedContentsTranslator = Translator[gcp.CachedContentRequest, GeminiCachedContentsSpan]
 
-// geminiCachedContentsToGCPVertexAITranslator passes Gemini cachedContents API requests through
-// to GCP Vertex AI unchanged. It does not rewrite the request path or mutate the body — the
-// processor forwards the original request, only attaching upstream auth.
-type geminiCachedContentsToGCPVertexAITranslator struct{}
+// geminiCachedContentsToGCPVertexAITranslator forwards cachedContents management calls to GCP
+// Vertex AI. The body is never re-marshalled — only the request path is reduced to the suffix
+// that gcpHandler.Do (in internal/backendauth/gcp.go) will then prepend with
+// "/v1/projects/{project}/locations/{region}".
+//
+// Without this rewrite the full path the client sent would be prepended again, producing
+// a doubled URL like "/v1/projects/A/locations/B//v1/projects/X/locations/Y/cachedContents".
+type geminiCachedContentsToGCPVertexAITranslator struct {
+	// originalPath is captured from the incoming :path header via SetRequestHeaders so RequestBody
+	// can strip the project/location prefix before forwarding to the backend.
+	originalPath string
+}
 
 // NewGeminiCachedContentsToGCPVertexAITranslator creates a passthrough translator for cachedContents.
 func NewGeminiCachedContentsToGCPVertexAITranslator() GeminiCachedContentsTranslator {
 	return &geminiCachedContentsToGCPVertexAITranslator{}
 }
 
-// RequestBody implements [GeminiCachedContentsTranslator.RequestBody]. It forwards the original
-// body unchanged. The processor leaves the request path alone since cachedContents URLs do not
-// embed a model name (the model is in the body for POST, and irrelevant for GET/PATCH/DELETE).
+// SetRequestHeaders captures the original request path. Implements [RequestHeadersSetter].
+func (g *geminiCachedContentsToGCPVertexAITranslator) SetRequestHeaders(headers map[string]string) {
+	g.originalPath = headers[":path"]
+}
+
+// RequestBody implements [GeminiCachedContentsTranslator.RequestBody]. It rewrites the request
+// path to the cachedContents suffix (everything from "/cachedContents" onward) so the backend
+// auth handler can prepend the configured project/location prefix.
 func (g *geminiCachedContentsToGCPVertexAITranslator) RequestBody(
 	original []byte, _ *gcp.CachedContentRequest, forceBodyMutation bool,
 ) (newHeaders []internalapi.Header, newBody []byte, err error) {
+	suffix, sErr := extractCachedContentsPathSuffix(g.originalPath)
+	if sErr != nil {
+		return nil, nil, sErr
+	}
+
+	newHeaders = []internalapi.Header{{pathHeaderName, suffix}}
 	if forceBodyMutation && len(original) > 0 {
 		newBody = original
-		newHeaders = []internalapi.Header{{contentLengthHeaderName, strconv.Itoa(len(newBody))}}
+		newHeaders = append(newHeaders, internalapi.Header{contentLengthHeaderName, strconv.Itoa(len(newBody))})
 	}
 	return
+}
+
+// extractCachedContentsPathSuffix strips the "/v1/projects/{p}/locations/{l}" prefix from a
+// Vertex AI cachedContents path and returns the remainder (e.g. "cachedContents/abc?updateMask=ttl").
+// gcpHandler.Do will prepend "/v1/projects/{configured-project}/locations/{configured-region}" to
+// produce the final upstream path.
+func extractCachedContentsPathSuffix(rawPath string) (string, error) {
+	if rawPath == "" {
+		return "", fmt.Errorf("missing request path for cachedContents")
+	}
+	idx := strings.Index(rawPath, "/cachedContents")
+	if idx == -1 {
+		return "", fmt.Errorf("unexpected cachedContents path: %q", rawPath)
+	}
+	// Drop the leading slash so the backend's prefix join yields exactly one slash.
+	return rawPath[idx+1:], nil
 }
 
 // ResponseHeaders implements [GeminiCachedContentsTranslator.ResponseHeaders].

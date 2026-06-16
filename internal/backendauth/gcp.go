@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -67,6 +68,15 @@ func newGCPHandler(ctx context.Context, gcpAuth *filterapi.GCPAuth) (filterapi.B
 //
 // The ":path" header is expected to contain the API-specific suffix, which is injected by translator.requestBody.
 // The suffix is combined with the generated prefix to form the complete path for the GCP API call.
+//
+// Some endpoints (e.g. Gemini cachedContents passthrough) arrive with a full
+// "/v1/projects/.../locations/.../..." path from the client and are not rewritten by a
+// translator. To avoid producing a duplicated path like
+//
+//	/v1/projects/A/locations/B//v1/projects/X/locations/Y/...
+//
+// we skip the prefix prepend when the inbound :path already begins with "/v1/projects/".
+// This also makes retries idempotent — re-entering Do with an already-prefixed path is a no-op.
 func (g *gcpHandler) Do(_ context.Context, requestHeaders map[string]string, _ []byte) ([]internalapi.Header, error) {
 	// Build the GCP URL prefix using the configured region and project name.
 	prefixPath := fmt.Sprintf("/v1/projects/%s/locations/%s", g.projectName, g.region)
@@ -77,7 +87,12 @@ func (g *gcpHandler) Do(_ context.Context, requestHeaders map[string]string, _ [
 		return nil, fmt.Errorf("missing ':path' header in the request")
 	}
 
-	newPath := fmt.Sprintf("%s/%s", prefixPath, path)
+	var newPath string
+	if strings.HasPrefix(path, "/v1/projects/") {
+		newPath = path
+	} else {
+		newPath = fmt.Sprintf("%s/%s", prefixPath, path)
+	}
 
 	// Get the access token
 	var accessToken string

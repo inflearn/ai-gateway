@@ -48,9 +48,14 @@ show_env() {
 do_create() {
   step "Create cachedContent (region=$REGION, model=$MODEL)"
 
-  # Vertex AI requires at least 1024 cached tokens. Repeat a sentence to be safe.
+  # Vertex AI minimum cached tokens varies by model:
+  #   gemini-1.5 / 2.0 / 2.5 flash-lite: ~1024
+  #   gemini-2.5 pro/flash, gemini-3.x : 4096
+  # The default repeat count keeps us safely above 4096 tokens for any current model.
+  # Override with REPEAT=200 ./test-gemini-cache.sh create if a model bumps the limit.
+  local repeat="${REPEAT:-100}"
   local prompt
-  prompt=$(printf 'You are a helpful assistant that explains the Envoy AI Gateway architecture in detail, including ext_proc, filter chain, and AIGatewayRoute routing. %.0s' {1..120})
+  prompt=$(printf 'You are a helpful assistant that explains the Envoy AI Gateway architecture in detail, including ext_proc, filter chain, AIGatewayRoute routing, BackendSecurityPolicy authentication, GCP credentials, OIDC, AWS Bedrock translation, and OpenAI compatibility. The data plane uses Envoy with ext_proc filters to translate between provider schemas. Routes are matched on headers including x-ai-eg-model and x-aigw-endpoint. %.0s' $(seq 1 "$repeat"))
 
   local body
   body=$(jq -n \
@@ -85,17 +90,51 @@ do_create() {
 # ---- 2. list ----
 do_list() {
   step "List cachedContents (region=$REGION)"
-  curl -sS -X GET "$GW/v1/projects/$PROJECT/locations/$REGION/cachedContents?pageSize=20" \
-    -H "Authorization: Bearer $TOKEN" \
-    | jq '.cachedContents[]? | {name, displayName, expireTime}'
+  local resp http_code
+  http_code=$(curl -sS -o /tmp/cc-list-resp -w "%{http_code}" -X GET \
+    "$GW/v1/projects/$PROJECT/locations/$REGION/cachedContents?pageSize=20" \
+    -H "Authorization: Bearer $TOKEN")
+  resp=$(cat /tmp/cc-list-resp)
+  if [[ "$http_code" != "200" ]]; then
+    warn "HTTP $http_code"
+    echo "$resp" | head -c 2000
+    echo
+    return 1
+  fi
+  if echo "$resp" | jq -e . >/dev/null 2>&1; then
+    echo "$resp" | jq '.cachedContents[]? | {name, displayName, expireTime}'
+    local count
+    count=$(echo "$resp" | jq '[.cachedContents[]?] | length')
+    ok "Found $count cache(s)"
+  else
+    warn "Non-JSON response:"
+    echo "$resp" | head -c 2000
+    echo
+    return 1
+  fi
 }
 
 # ---- 3. get ----
 do_get() {
   local name="${1:?usage: get <cache-resource-name>}"
   step "Get $name"
-  curl -sS -X GET "$GW/$name" \
-    -H "Authorization: Bearer $TOKEN" | jq .
+  local http_code
+  http_code=$(curl -sS -o /tmp/cc-get-resp -w "%{http_code}" -X GET "$GW/$name" \
+    -H "Authorization: Bearer $TOKEN")
+  local resp
+  resp=$(cat /tmp/cc-get-resp)
+  if [[ "$http_code" != "200" ]]; then
+    warn "HTTP $http_code"
+    echo "$resp" | head -c 2000; echo
+    return 1
+  fi
+  if echo "$resp" | jq -e . >/dev/null 2>&1; then
+    echo "$resp" | jq .
+  else
+    warn "Non-JSON response:"
+    echo "$resp" | head -c 2000; echo
+    return 1
+  fi
 }
 
 # ---- 4. use (generateContent with cachedContent) ----

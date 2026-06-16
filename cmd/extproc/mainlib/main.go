@@ -381,6 +381,26 @@ func Main(ctx context.Context, args []string, stderr io.Writer) (err error) {
 		extractGeminiPathInfo,
 	)
 
+	// Gemini cachedContents API for explicit context caching (POST/GET/PATCH/DELETE).
+	// Shares the /v1/projects/ prefix with generateContent above; server.go falls through
+	// from generateContent's pathExtract (which returns nil for non-/models/ paths) to this entry.
+	geminiCacheMetricsFactory := metrics.NewMetricsFactory(meter, metricsRequestHeaderAttributes, metrics.GenAIOperationChat)
+	geminiCacheFactory := extproc.NewFactory(
+		geminiCacheMetricsFactory,
+		tracingapi.NoopTracer[gcpschema.CachedContentRequest, struct{}, struct{}]{},
+		endpointspec.GeminiCachedContentsEndpointSpec{},
+	)
+	server.RegisterPrefix(
+		path.Join(flags.rootPrefix, endpointPrefixes.Gemini, "/v1beta/cachedContents"),
+		geminiCacheFactory,
+		extractGeminiCachedContentsPathInfo,
+	)
+	server.RegisterPrefix(
+		path.Join(flags.rootPrefix, endpointPrefixes.Gemini, "/v1/projects/"),
+		geminiCacheFactory,
+		extractGeminiCachedContentsPathInfo,
+	)
+
 	// Create and register gRPC server with ExternalProcessorServer (the service Envoy calls).
 	if err = startConfigWatcher(ctx, &flags, server, l, time.Second*5); err != nil {
 		return fmt.Errorf("failed to start config watcher: %w", err)
@@ -512,6 +532,26 @@ func extractGeminiPathInfo(rawPath string) map[string]string {
 		result["x-aigw-path-stream"] = "true"
 	}
 	return result
+}
+
+// extractGeminiCachedContentsPathInfo recognises Gemini cachedContents management paths and
+// returns a synthetic "x-aigw-endpoint=cachedContents" header so AIGatewayRoute can route the
+// request on that header. Returns nil for paths that are not cachedContents — the server then
+// falls through to the next registered prefix entry.
+//
+// Supported paths:
+//   - /v1beta/cachedContents[/{cache_id}]
+//   - /v1/projects/{project}/locations/{location}/cachedContents[/{cache_id}]
+func extractGeminiCachedContentsPathInfo(rawPath string) map[string]string {
+	p := rawPath
+	if q := strings.Index(p, "?"); q != -1 {
+		p = p[:q]
+	}
+	// Match either the v1beta developer API or the Vertex AI v1 path.
+	if !strings.Contains(p, "/cachedContents") {
+		return nil
+	}
+	return map[string]string{"x-aigw-endpoint": "cachedContents"}
 }
 
 func listen(ctx context.Context, name, network, address string) (net.Listener, error) {

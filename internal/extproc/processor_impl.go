@@ -180,11 +180,28 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequest
 			})
 		}
 	}
+
+	originalPath := r.requestHeaders[":path"]
+
+	// If a client used the Gemini Developer API path form (/v1beta/...), rewrite it to the
+	// Vertex-style suffix so the GCP backend handler can prepend its configured
+	// /v1/projects/{p}/locations/{r} prefix. This lets clients targeting the Developer API
+	// reach our Vertex backends without changing their SDK or URL form.
+	if rewritten := rewriteDeveloperAPIPath(originalPath); rewritten != "" && rewritten != originalPath {
+		r.requestHeaders[":path"] = rewritten
+		additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
+			AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+			Header:       &corev3.HeaderValue{Key: ":path", RawValue: []byte(rewritten)},
+		})
+	}
+
 	// The upstream-filter stage looks up its processor by x-ai-eg-original-path
 	// (see processorForPath). Without this header the upstream filter has no way to
 	// pick the right EndpointSpec and the request stalls. Mirror ProcessRequestBody's
-	// behaviour so body-less requests don't lose the path.
-	if originalPath := r.requestHeaders[":path"]; originalPath != "" {
+	// behaviour so body-less requests don't lose the path. Keep the *original* client
+	// path here (before any /v1beta rewrite) so the EndpointSpec lookup still matches
+	// the prefix the client targeted.
+	if originalPath != "" {
 		if r.requestHeaders[originalPathHeader] == "" {
 			r.requestHeaders[originalPathHeader] = originalPath
 			additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
@@ -213,6 +230,30 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequest
 			},
 		},
 	}, nil
+}
+
+// rewriteDeveloperAPIPath converts a Gemini Developer API cachedContents path into the
+// Vertex-style suffix that the GCP backend handler can prefix with /v1/projects/{p}/locations/{r}.
+// This lets clients targeting the Developer API (e.g. google-genai-sdk in default mode) reach
+// our Vertex backends untouched.
+//
+//	/v1beta/cachedContents?pageSize=20  → /cachedContents?pageSize=20
+//	/v1beta/cachedContents/abc123       → /cachedContents/abc123
+//
+// /v1beta/models/... is intentionally NOT rewritten here: the Gemini generateContent translator
+// already overwrites :path in upstreamProcessor.ProcessRequestHeaders via translator.RequestBody,
+// so a router-level rewrite would be redundant and could mask logic errors there.
+//
+// Returns the path unchanged when no rewrite applies.
+func rewriteDeveloperAPIPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	const devCachedContents = "/v1beta/cachedContents"
+	if strings.HasPrefix(path, devCachedContents) {
+		return path[len("/v1beta"):]
+	}
+	return path
 }
 
 // ProcessResponseHeaders implements [Processor.ProcessResponseHeaders].

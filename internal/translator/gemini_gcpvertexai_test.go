@@ -163,6 +163,46 @@ func TestGeminiToGCPVertexAITranslator_RequestBody(t *testing.T) {
 		require.NoError(t, err)
 		require.Contains(t, string(body), `"cachedContent":"`+cacheName+`"`)
 	})
+
+	t.Run("cachedContent strips systemInstruction/toolConfig/tools (Vertex rejects them together)", func(t *testing.T) {
+		tr := NewGeminiToGCPVertexAITranslator("").(*geminiToGCPVertexAITranslator)
+		req := &gcp.GenerateContentRequest{
+			Model:             "gemini-1.5-pro",
+			CachedContent:     "projects/p/locations/global/cachedContents/abc",
+			Contents:          []genai.Content{{Parts: []*genai.Part{{Text: "q"}}, Role: "user"}},
+			SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: "system"}}, Role: "system"},
+			ToolConfig:        &genai.ToolConfig{},
+			Tools:             []genai.Tool{{}},
+		}
+		rawBody, err := json.Marshal(req)
+		require.NoError(t, err)
+
+		_, body, err := tr.RequestBody(rawBody, req, false)
+		require.NoError(t, err)
+		s := string(body)
+		require.Contains(t, s, `"cachedContent":"projects/p/locations/global/cachedContents/abc"`)
+		require.NotContains(t, s, `"systemInstruction"`)
+		require.NotContains(t, s, `"toolConfig"`)
+		require.NotContains(t, s, `"tools"`)
+	})
+
+	t.Run("without cachedContent, systemInstruction/tools are preserved", func(t *testing.T) {
+		tr := NewGeminiToGCPVertexAITranslator("").(*geminiToGCPVertexAITranslator)
+		req := &gcp.GenerateContentRequest{
+			Model:             "gemini-1.5-pro",
+			Contents:          []genai.Content{{Parts: []*genai.Part{{Text: "q"}}, Role: "user"}},
+			SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: "system"}}, Role: "system"},
+			Tools:             []genai.Tool{{}},
+		}
+		rawBody, err := json.Marshal(req)
+		require.NoError(t, err)
+
+		_, body, err := tr.RequestBody(rawBody, req, false)
+		require.NoError(t, err)
+		s := string(body)
+		require.Contains(t, s, `"systemInstruction"`)
+		require.Contains(t, s, `"tools"`)
+	})
 }
 
 // TestGeminiToGCPVertexAITranslator_ResponseHeaders tests the ResponseHeaders method.

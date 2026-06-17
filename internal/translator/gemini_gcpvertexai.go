@@ -11,6 +11,7 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/tidwall/sjson"
 	"google.golang.org/genai"
 
 	"github.com/envoyproxy/ai-gateway/internal/apischema/gcp"
@@ -46,6 +47,12 @@ func NewGeminiToGCPVertexAITranslator(modelNameOverride internalapi.ModelNameOve
 
 // RequestBody implements [GeminiGenerateContentTranslator.RequestBody].
 // It sets the correct Vertex AI path and re-marshals the body (json:"-" internal fields are excluded).
+//
+// When the body references a cachedContent, Vertex rejects requests that also carry
+// systemInstruction / toolConfig / tools — those fields are already captured inside the cache
+// and must not be re-specified. Strip them in that case so clients (e.g. Java GenAI SDK)
+// that send them unconditionally still succeed.
+// See https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-use
 func (g *geminiToGCPVertexAITranslator) RequestBody(_ []byte, body *gcp.GenerateContentRequest, _ bool) (
 	newHeaders []internalapi.Header, newBody []byte, err error,
 ) {
@@ -67,6 +74,19 @@ func (g *geminiToGCPVertexAITranslator) RequestBody(_ []byte, body *gcp.Generate
 	if err != nil {
 		return nil, nil, fmt.Errorf("error marshaling Gemini request: %w", err)
 	}
+
+	// When using a cached content, strip the fields Vertex refuses to accept alongside it.
+	// The GenerateContentRequest struct does not use omitempty on Tools, so a nil slice still
+	// marshals as `"tools":null`; sjson.DeleteBytes removes the keys outright.
+	if body.CachedContent != "" {
+		for _, key := range []string{"systemInstruction", "toolConfig", "tools"} {
+			newBody, err = sjson.DeleteBytes(newBody, key)
+			if err != nil {
+				return nil, nil, fmt.Errorf("error stripping %q for cached generateContent: %w", key, err)
+			}
+		}
+	}
+
 	newHeaders = []internalapi.Header{
 		{pathHeaderName, path},
 		{contentLengthHeaderName, strconv.Itoa(len(newBody))},

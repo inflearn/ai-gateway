@@ -1992,3 +1992,53 @@ func mustCompileCEL(t *testing.T, expr string) cel.Program {
 	require.NoError(t, err)
 	return prog
 }
+
+func TestRewriteDeveloperAPIPath(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", ""},
+		{
+			name: "v1beta cachedContents list — strip /v1beta",
+			in:   "/v1beta/cachedContents?pageSize=20",
+			want: "/cachedContents?pageSize=20",
+		},
+		{
+			name: "v1beta cachedContents by id — strip /v1beta",
+			in:   "/v1beta/cachedContents/abc123",
+			want: "/cachedContents/abc123",
+		},
+		{
+			name: "v1beta projects (Java SDK echoes Vertex name) — swap /v1beta → /v1",
+			in:   "/v1beta/projects/p/locations/global/cachedContents/3530742719682969600",
+			want: "/v1/projects/p/locations/global/cachedContents/3530742719682969600",
+		},
+		{
+			name: "v1beta projects with updateMask query — preserved across swap",
+			in:   "/v1beta/projects/p/locations/global/cachedContents/abc?updateMask=ttl",
+			want: "/v1/projects/p/locations/global/cachedContents/abc?updateMask=ttl",
+		},
+		{
+			name: "v1beta models — left alone (handled by generateContent translator)",
+			in:   "/v1beta/models/gemini-2.0-flash:generateContent",
+			want: "/v1beta/models/gemini-2.0-flash:generateContent",
+		},
+		{
+			name: "non-v1beta path — left alone",
+			in:   "/v1/projects/p/locations/global/cachedContents/abc",
+			want: "/v1/projects/p/locations/global/cachedContents/abc",
+		},
+		{
+			name: "unrelated path — left alone",
+			in:   "/v1/chat/completions",
+			want: "/v1/chat/completions",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, rewriteDeveloperAPIPath(tc.in))
+		})
+	}
+}

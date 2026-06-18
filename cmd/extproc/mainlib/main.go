@@ -363,6 +363,15 @@ func Main(ctx context.Context, args []string, stderr io.Writer) (err error) {
 		geminiCacheFactory,
 		extractGeminiCachedContentsPathInfo,
 	)
+	// Java GenAI SDK in Developer-API mode sometimes echoes a Vertex resource name back into a
+	// v1beta call (PATCH/DELETE/GET on a previously-created cache), producing
+	// /v1beta/projects/{p}/locations/{l}/cachedContents/{id}. routerProcessor rewrites this to
+	// /v1/projects/... before forwarding, but the prefix must still be registered for routing.
+	server.RegisterPrefix(
+		path.Join(flags.rootPrefix, endpointPrefixes.Gemini, "/v1beta/projects/"),
+		geminiCacheFactory,
+		extractGeminiCachedContentsPathInfo,
+	)
 
 	// Create and register gRPC server with ExternalProcessorServer (the service Envoy calls).
 	if err = filterapi.StartConfigWatcher(ctx, flags.configPath, server, l, time.Second*5); err != nil {

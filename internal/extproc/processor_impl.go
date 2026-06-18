@@ -237,13 +237,22 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequest
 	}, nil
 }
 
-// rewriteDeveloperAPIPath converts a Gemini Developer API cachedContents path into the
-// Vertex-style suffix that the GCP backend handler can prefix with /v1/projects/{p}/locations/{r}.
-// This lets clients targeting the Developer API (e.g. google-genai-sdk in default mode) reach
-// our Vertex backends untouched.
+// rewriteDeveloperAPIPath converts Gemini Developer API request paths into a form the GCP
+// backend can serve. This lets clients targeting the Developer API (e.g. google-genai-sdk in
+// default mode) reach our Vertex backends untouched.
 //
-//	/v1beta/cachedContents?pageSize=20  → /cachedContents?pageSize=20
-//	/v1beta/cachedContents/abc123       → /cachedContents/abc123
+//	/v1beta/cachedContents?pageSize=20                                  → /cachedContents?pageSize=20
+//	/v1beta/cachedContents/abc123                                       → /cachedContents/abc123
+//	/v1beta/projects/{p}/locations/{r}/cachedContents/{id}[?updateMask] → /v1/projects/{p}/locations/{r}/cachedContents/{id}[?updateMask]
+//
+// Two shapes, two strategies:
+//   - "/v1beta/cachedContents..." (Developer API style) drops the /v1beta prefix so the GCP
+//     backend handler prepends its configured "/v1/projects/{p}/locations/{r}/" — the resulting
+//     URL has Vertex's hostname and the gateway-configured project/location.
+//   - "/v1beta/projects/..." (the SDK echoing a Vertex resource name back into a v1beta call,
+//     typically PATCH/DELETE on a cache) keeps the embedded project/location and just swaps
+//     /v1beta → /v1. The backend handler's existing "/v1/projects/" guard then forwards the
+//     URL verbatim to Vertex.
 //
 // /v1beta/models/... is intentionally NOT rewritten here: the Gemini generateContent translator
 // already overwrites :path in upstreamProcessor.ProcessRequestHeaders via translator.RequestBody,
@@ -253,6 +262,10 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequest
 func rewriteDeveloperAPIPath(path string) string {
 	if path == "" {
 		return ""
+	}
+	const devProjects = "/v1beta/projects/"
+	if strings.HasPrefix(path, devProjects) {
+		return "/v1/projects/" + path[len(devProjects):]
 	}
 	const devCachedContents = "/v1beta/cachedContents"
 	if strings.HasPrefix(path, devCachedContents) {

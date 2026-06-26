@@ -8,6 +8,7 @@ package translator
 import (
 	"bytes"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -400,7 +401,6 @@ func TestOpenAIToGCPVertexAITranslatorV1ChatCompletion_RequestBody(t *testing.T)
 			// Since these are stub implementations, we expect nil mutations.
 			wantHeaderMut: []internalapi.Header{
 				{":path", "publishers/google/models/gemini-pro:generateContent"},
-				{"content-length", "256"},
 			},
 			wantBody: wantBdy,
 		},
@@ -438,7 +438,6 @@ func TestOpenAIToGCPVertexAITranslatorV1ChatCompletion_RequestBody(t *testing.T)
 			// Since these are stub implementations, we expect nil mutations.
 			wantHeaderMut: []internalapi.Header{
 				{":path", "publishers/google/models/gemini-pro:streamGenerateContent?alt=sse"},
-				{"content-length", "256"},
 			},
 			wantBody: wantBdy,
 		},
@@ -477,7 +476,6 @@ func TestOpenAIToGCPVertexAITranslatorV1ChatCompletion_RequestBody(t *testing.T)
 			// Since these are stub implementations, we expect nil mutations.
 			wantHeaderMut: []internalapi.Header{
 				{":path", "publishers/google/models/gemini-flash:generateContent"},
-				{"content-length", "256"},
 			},
 			wantBody: wantBdy,
 		},
@@ -532,7 +530,6 @@ func TestOpenAIToGCPVertexAITranslatorV1ChatCompletion_RequestBody(t *testing.T)
 			wantError: false,
 			wantHeaderMut: []internalapi.Header{
 				{":path", "publishers/google/models/gemini-pro:generateContent"},
-				{"content-length", "516"},
 			},
 			wantBody: wantBdyWithTools,
 		},
@@ -582,7 +579,6 @@ func TestOpenAIToGCPVertexAITranslatorV1ChatCompletion_RequestBody(t *testing.T)
 			wantError: false,
 			wantHeaderMut: []internalapi.Header{
 				{":path", "publishers/google/models/gemini-1.5-pro:generateContent"},
-				{"content-length", "395"},
 			},
 			wantBody: wantBdyWithVendorFields,
 		},
@@ -630,7 +626,6 @@ func TestOpenAIToGCPVertexAITranslatorV1ChatCompletion_RequestBody(t *testing.T)
 			wantError: false,
 			wantHeaderMut: []internalapi.Header{
 				{":path", "publishers/google/models/gemini-1.5-pro:generateContent"},
-				{"content-length", "394"},
 			},
 			wantBody: wantBdyWithSafetySettingFields,
 		},
@@ -675,7 +670,6 @@ func TestOpenAIToGCPVertexAITranslatorV1ChatCompletion_RequestBody(t *testing.T)
 			wantError: false,
 			wantHeaderMut: []internalapi.Header{
 				{":path", "publishers/google/models/gemini-3-pro:generateContent"},
-				{"content-length", "342"},
 			},
 			wantBody: wantBdyWithMediaResolutionFields,
 		},
@@ -716,7 +710,6 @@ func TestOpenAIToGCPVertexAITranslatorV1ChatCompletion_RequestBody(t *testing.T)
 			wantError: false,
 			wantHeaderMut: []internalapi.Header{
 				{":path", "publishers/google/models/gemini-1.5-pro:generateContent"},
-				{"content-length", "403"},
 			},
 			wantBody: wantBdyWithGuidedChoice,
 		},
@@ -757,7 +750,6 @@ func TestOpenAIToGCPVertexAITranslatorV1ChatCompletion_RequestBody(t *testing.T)
 			wantError: false,
 			wantHeaderMut: []internalapi.Header{
 				{":path", "publishers/google/models/gemini-1.5-pro:generateContent"},
-				{"content-length", "407"},
 			},
 			wantBody: wantBdyWithGuidedRegex,
 		},
@@ -785,7 +777,6 @@ func TestOpenAIToGCPVertexAITranslatorV1ChatCompletion_RequestBody(t *testing.T)
 			wantError: false,
 			wantHeaderMut: []internalapi.Header{
 				{":path", "publishers/google/models/gemini-1.5-pro:generateContent"},
-				{"content-length", "189"},
 			},
 			wantBody: wantBdyWithEnterpriseWebSearch,
 		},
@@ -801,7 +792,23 @@ func TestOpenAIToGCPVertexAITranslatorV1ChatCompletion_RequestBody(t *testing.T)
 			}
 			require.NoError(t, err)
 
-			if diff := cmp.Diff(tc.wantHeaderMut, headerMut); diff != "" {
+			// Separate the content-length header from the others and assert it
+			// matches the serialized body length, rather than hardcoding a
+			// byte count that breaks whenever the body changes by a byte.
+			var gotHeaders []internalapi.Header
+			foundContentLength := false
+			for _, h := range headerMut {
+				if h.Key() == contentLengthHeaderName {
+					assert.Equal(t, strconv.Itoa(len(bodyMut)), h.Value(),
+						"content-length header should equal the serialized body length")
+					foundContentLength = true
+					continue
+				}
+				gotHeaders = append(gotHeaders, h)
+			}
+			assert.True(t, foundContentLength, "content-length header should be set")
+
+			if diff := cmp.Diff(tc.wantHeaderMut, gotHeaders); diff != "" {
 				t.Errorf("HeaderMutation mismatch (-want +got):\n%s", diff)
 			}
 

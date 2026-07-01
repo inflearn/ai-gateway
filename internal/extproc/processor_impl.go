@@ -207,18 +207,20 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequest
 	// path here (before any /v1beta rewrite) so the EndpointSpec lookup still matches
 	// the prefix the client targeted.
 	if originalPath != "" {
-		if r.requestHeaders[originalPathHeader] == "" {
-			r.requestHeaders[originalPathHeader] = originalPath
-			additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
-				Header: &corev3.HeaderValue{Key: originalPathHeader, RawValue: []byte(originalPath)},
-			})
-		}
-		if r.requestHeaders[internalapi.EnvoyOriginalPathHeader] == "" {
-			r.requestHeaders[internalapi.EnvoyOriginalPathHeader] = originalPath
-			additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
-				Header: &corev3.HeaderValue{Key: internalapi.EnvoyOriginalPathHeader, RawValue: []byte(originalPath)},
-			})
-		}
+		// These original-path headers are owned by the gateway: overwrite unconditionally so a
+		// client-supplied value cannot shadow them (downstream processor lookup keys off them).
+		// The value captured here is the pre-rewrite client path; ProcessRequestBody guards
+		// against clobbering it with the rewritten :path.
+		r.requestHeaders[originalPathHeader] = originalPath
+		additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
+			AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+			Header:       &corev3.HeaderValue{Key: originalPathHeader, RawValue: []byte(originalPath)},
+		})
+		r.requestHeaders[internalapi.EnvoyOriginalPathHeader] = originalPath
+		additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
+			AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+			Header:       &corev3.HeaderValue{Key: internalapi.EnvoyOriginalPathHeader, RawValue: []byte(originalPath)},
+		})
 	}
 	if len(additionalHeaders) == 0 {
 		return r.passThroughProcessor.ProcessRequestHeaders(ctx, hm)
@@ -417,20 +419,26 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequest
 		Header:       &corev3.HeaderValue{Key: internalapi.ModelNameHeaderKeyDefault, RawValue: []byte(originalModel)},
 	})
 	originalPath := r.requestHeaders[":path"]
-	// These original-path headers are owned by extproc, so set them unconditionally.
-	// A client-supplied or pre-existing value must not shadow the gateway's own value,
-	// as downstream logic (e.g. processor lookup on retry) keys off it.
-	r.requestHeaders[originalPathHeader] = originalPath
-	additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
-		// Overwrite unconditionally so a client-supplied or pre-existing value is replaced, not appended.
-		AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
-		Header:       &corev3.HeaderValue{Key: originalPathHeader, RawValue: []byte(originalPath)},
-	})
-	r.requestHeaders[internalapi.EnvoyOriginalPathHeader] = originalPath
-	additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
-		AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
-		Header:       &corev3.HeaderValue{Key: internalapi.EnvoyOriginalPathHeader, RawValue: []byte(originalPath)},
-	})
+	// Guard: ProcessRequestHeaders already stored the pre-rewrite client path here
+	// (unconditionally, so a client-supplied value cannot shadow it). At this point
+	// r.requestHeaders[":path"] is the *rewritten* path (e.g. /cachedContents after
+	// /v1beta/cachedContents -> /cachedContents), so an unconditional overwrite would
+	// clobber the original client path that upstream-filter's processorForPath needs to
+	// resolve the right EndpointSpec via prefix match.
+	if r.requestHeaders[originalPathHeader] == "" {
+		r.requestHeaders[originalPathHeader] = originalPath
+		additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
+			AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+			Header:       &corev3.HeaderValue{Key: originalPathHeader, RawValue: []byte(originalPath)},
+		})
+	}
+	if r.requestHeaders[internalapi.EnvoyOriginalPathHeader] == "" {
+		r.requestHeaders[internalapi.EnvoyOriginalPathHeader] = originalPath
+		additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
+			AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+			Header:       &corev3.HeaderValue{Key: internalapi.EnvoyOriginalPathHeader, RawValue: []byte(originalPath)},
+		})
+	}
 	// Propagate synthetic prefix-router headers (x-aigw-endpoint, x-aigw-region) into the
 	// HeaderMutation response so they reach Envoy's router and can drive AIGatewayRoute
 	// header-based matching. The prefix matcher in server.go writes these into the local

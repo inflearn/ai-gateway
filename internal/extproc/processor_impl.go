@@ -395,10 +395,17 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequest
 		Header: &corev3.HeaderValue{Key: internalapi.ModelNameHeaderKeyDefault, RawValue: []byte(originalModel)},
 	})
 	originalPath := r.requestHeaders[":path"]
-	r.requestHeaders[originalPathHeader] = originalPath
-	additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
-		Header: &corev3.HeaderValue{Key: originalPathHeader, RawValue: []byte(originalPath)},
-	})
+	// Guard: ProcessRequestHeaders may have already stored the pre-rewrite path here.
+	// At this point r.requestHeaders[":path"] is the *rewritten* path (e.g. /cachedContents
+	// after /v1beta/cachedContents → /cachedContents), so an unconditional overwrite would
+	// clobber the original client path that upstream-filter's processorForPath needs to
+	// resolve the right EndpointSpec via prefix match.
+	if r.requestHeaders[originalPathHeader] == "" {
+		r.requestHeaders[originalPathHeader] = originalPath
+		additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{
+			Header: &corev3.HeaderValue{Key: originalPathHeader, RawValue: []byte(originalPath)},
+		})
+	}
 	if r.requestHeaders[internalapi.EnvoyOriginalPathHeader] == "" {
 		r.requestHeaders[internalapi.EnvoyOriginalPathHeader] = originalPath
 		additionalHeaders = append(additionalHeaders, &corev3.HeaderValueOption{

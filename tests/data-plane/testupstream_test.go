@@ -329,7 +329,7 @@ func TestWithTestUpstream(t *testing.T) {
 			requestBody:     toolCallResultsRequestBody,
 			expRequestBody:  `{"max_tokens":1024,"messages":[{"content":[{"text":"List the files in the /tmp directory","type":"text"}],"role":"user"},{"content":[{"id":"call_abc123","input":{"path":"/tmp"},"name":"list_files","type":"tool_use"}],"role":"assistant"},{"content":[{"tool_use_id":"call_abc123","is_error":false,"content":[{"text":"[\"foo.txt\", \"bar.log\", \"data.csv\"]","type":"text"}],"type":"tool_result"}],"role":"user"}],"anthropic_version":"vertex-2023-10-16"}`,
 			responseBody:    `{"id":"msg_123","type":"message","role":"assistant","stop_reason": "end_turn", "content":[{"type":"text","text":"Hello from Anthropic!"}],"usage":{"input_tokens":10,"output_tokens":25,"cache_read_input_tokens":10}}`,
-			expResponseBody: `{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"Hello from Anthropic!","role":"assistant"}}],"created":123, "id":"msg_123","model":"gpt-4-0613","object":"chat.completion","usage":{"completion_tokens":25,"prompt_tokens":20,"total_tokens":45,"prompt_tokens_details":{"cached_tokens":10}}}`,
+			expResponseBody: `{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"Hello from Anthropic!","role":"assistant"}}],"created":123, "id":"msg_123","model":"gpt-4-0613","object":"chat.completion","usage":{"completion_tokens":25,"completion_tokens_details":{},"prompt_tokens":20,"total_tokens":45,"prompt_tokens_details":{"cached_tokens":10}}}`,
 			expStatus:       http.StatusOK,
 		},
 		{
@@ -397,7 +397,7 @@ func TestWithTestUpstream(t *testing.T) {
 			responseStatus:    strconv.Itoa(http.StatusOK),
 			responseBody:      `{"id":"msg_123","type":"message","role":"assistant","stop_reason": "end_turn", "content":[{"type":"text","text":"Hello from Anthropic!"}],"usage":{"input_tokens":10,"output_tokens":25}}`,
 			expStatus:         http.StatusOK,
-			expResponseBody:   `{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"Hello from Anthropic!","role":"assistant"}}],"created":123, "id":"msg_123","model":"claude-3-sonnet","object":"chat.completion","usage":{"completion_tokens":25,"prompt_tokens":10,"total_tokens":35,"prompt_tokens_details":{}}}`,
+			expResponseBody:   `{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"Hello from Anthropic!","role":"assistant"}}],"created":123, "id":"msg_123","model":"claude-3-sonnet","object":"chat.completion","usage":{"completion_tokens":25,"completion_tokens_details":{},"prompt_tokens":10,"total_tokens":35,"prompt_tokens_details":{}}}`,
 		},
 		{
 			name:              "gcp-anthropicai - /v1/chat/completions - with cache",
@@ -411,7 +411,7 @@ func TestWithTestUpstream(t *testing.T) {
 			responseStatus:    strconv.Itoa(http.StatusOK),
 			responseBody:      `{"id":"msg_123","type":"message","role":"assistant","stop_reason": "end_turn", "content":[{"type":"text","text":"Hello from cached Anthropic!"}],"usage":{"input_tokens":10,"output_tokens":25, "cache_read_input_tokens": 8}}`,
 			expStatus:         http.StatusOK,
-			expResponseBody:   `{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"Hello from cached Anthropic!","role":"assistant"}}], "created":123, "id":"msg_123", "model":"claude-3-sonnet","object":"chat.completion","usage":{"completion_tokens":25,"prompt_tokens":18,"total_tokens":43,"prompt_tokens_details":{"cached_tokens":8}}}`,
+			expResponseBody:   `{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"Hello from cached Anthropic!","role":"assistant"}}], "created":123, "id":"msg_123", "model":"claude-3-sonnet","object":"chat.completion","usage":{"completion_tokens":25,"completion_tokens_details":{},"prompt_tokens":18,"total_tokens":43,"prompt_tokens_details":{"cached_tokens":8}}}`,
 		},
 		{
 			name:            "modelname-override - /v1/chat/completions",
@@ -590,7 +590,7 @@ data: [DONE]
 			expRequestHeaders: map[string]string{"Authorization": "Bearer " + fakeGCPAuthToken},
 			responseStatus:    strconv.Itoa(http.StatusOK),
 			responseBody: `event: message_start
-data: {"type": "message_start", "message": {"id": "msg_123", "usage": {"input_tokens": 15}}}
+data: {"type": "message_start", "message": {"id": "msg_123", "usage": {"input_tokens": 15, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 10, "output_tokens": 1}}}
 
 event: content_block_start
 data: {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}
@@ -605,7 +605,7 @@ event: content_block_stop
 data: {"type": "content_block_stop", "index": 0}
 
 event: message_delta
-data: {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 12, "cache_read_input_tokens":10}}
+data: {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"input_tokens": 15, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 10, "output_tokens": 12}}
 
 event: message_stop
 data: {"type": "message_stop"}
@@ -617,7 +617,7 @@ data: {"id":"msg_123","choices":[{"index":0,"delta":{"content":" due to Rayleigh
 
 data: {"id":"msg_123","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"created":123,"model":"claude-3-sonnet","object":"chat.completion.chunk"}
 
-data: {"id":"msg_123","choices":[],"created":123,"model":"claude-3-sonnet","object":"chat.completion.chunk","usage":{"prompt_tokens":25,"completion_tokens":12,"total_tokens":37,"prompt_tokens_details":{"cached_tokens":10}}}
+data: {"id":"msg_123","choices":[],"created":123,"model":"claude-3-sonnet","object":"chat.completion.chunk","usage":{"prompt_tokens":25,"completion_tokens":12,"total_tokens":37,"completion_tokens_details":{},"prompt_tokens_details":{"cached_tokens":10}}}
 
 data: [DONE]
 
@@ -653,7 +653,7 @@ data: [DONE]
 			expRequestHeaders: map[string]string{"Authorization": "Bearer " + fakeGCPAuthToken},
 			responseStatus:    strconv.Itoa(http.StatusOK),
 			responseBody: `event: message_start
-data: {"type": "message_start", "message": {"id": "msg_123", "usage": {"input_tokens": 50}}}
+data: {"type": "message_start", "message": {"id": "msg_123", "usage": {"input_tokens": 50, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 1}}}
 
 event: content_block_start
 data: {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "toolu_abc123", "name": "get_weather", "input": {}}}
@@ -668,7 +668,7 @@ event: content_block_stop
 data: {"type": "content_block_stop", "index": 0}
 
 event: message_delta
-data: {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 20}}
+data: {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"input_tokens": 50, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 20}}
 
 event: message_stop
 data: {"type": "message_stop"}`,
@@ -681,7 +681,7 @@ data: {"id":"msg_123","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"i
 
 data: {"id":"msg_123","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"created":123,"model":"claude-3-sonnet","object":"chat.completion.chunk"}
 
-data: {"id":"msg_123","choices":[],"created":123,"model":"claude-3-sonnet","object":"chat.completion.chunk","usage":{"prompt_tokens":50,"completion_tokens":20,"total_tokens":70,"prompt_tokens_details":{}}}
+data: {"id":"msg_123","choices":[],"created":123,"model":"claude-3-sonnet","object":"chat.completion.chunk","usage":{"prompt_tokens":50,"completion_tokens":20,"total_tokens":70,"completion_tokens_details":{},"prompt_tokens_details":{}}}
 
 data: [DONE]
 
@@ -949,7 +949,7 @@ data: [DONE]
 			expRequestHeaders: map[string]string{"Authorization": "Bearer " + fakeGCPAuthToken},
 			responseStatus:    strconv.Itoa(http.StatusOK),
 			responseBody: `event: message_start
-data: {"type": "message_start", "message": {"id": "msg_789", "usage": {"input_tokens": 8}}}
+data: {"type": "message_start", "message": {"id": "msg_789", "usage": {"input_tokens": 8, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 1}}}
 
 event: content_block_start
 data: {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}
@@ -961,7 +961,7 @@ event: content_block_stop
 data: {"type": "content_block_stop", "index": 0}
 
 event: message_delta
-data: {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 15}}
+data: {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"input_tokens": 8, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 15}}
 
 event: message_stop
 data: {"type": "message_stop"}
@@ -969,7 +969,7 @@ data: {"type": "message_stop"}
 `,
 			expStatus: http.StatusOK,
 			expResponseBody: `event: message_start
-data: {"type": "message_start", "message": {"id": "msg_789", "usage": {"input_tokens": 8}}}
+data: {"type": "message_start", "message": {"id": "msg_789", "usage": {"input_tokens": 8, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 1}}}
 
 event: content_block_start
 data: {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}
@@ -981,7 +981,7 @@ event: content_block_stop
 data: {"type": "content_block_stop", "index": 0}
 
 event: message_delta
-data: {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 15}}
+data: {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"input_tokens": 8, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 15}}
 
 event: message_stop
 data: {"type": "message_stop"}
@@ -1091,7 +1091,7 @@ event: content_block_stop
 data: {"type":"content_block_stop","index":0}
 
 event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":9,"output_tokens":10}}
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":9,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}
 
 event: message_stop
 data: {"type":"message_stop"}
@@ -1129,7 +1129,7 @@ data: {"type":"message_stop"}
 {"bytes":"eyJ0eXBlIjoiY29udGVudF9ibG9ja19kZWx0YSIsImluZGV4IjowLCJkZWx0YSI6eyJ0eXBlIjoidGV4dF9kZWx0YSIsInRleHQiOiLwn5GLIEhvdyJ9fQ==","p":"abcdefghijklmnopqrstuvwxyzABCDEFG"}
 {"bytes":"eyJ0eXBlIjoiY29udGVudF9ibG9ja19kZWx0YSIsImluZGV4IjowLCJkZWx0YSI6eyJ0eXBlIjoidGV4dF9kZWx0YSIsInRleHQiOiIgYXJlIHlvdSBkb2luZyB0b2RheT8ifX0=","p":"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234"}
 {"bytes":"eyJ0eXBlIjoiY29udGVudF9ibG9ja19zdG9wIiwiaW5kZXgiOjB9","p":"abcdefghijklmnopqrstuvwxyz"}
-{"bytes":"eyJ0eXBlIjoibWVzc2FnZV9kZWx0YSIsImRlbHRhIjp7InN0b3BfcmVhc29uIjoiZW5kX3R1cm4iLCJzdG9wX3NlcXVlbmNlIjpudWxsfSwidXNhZ2UiOnsib3V0cHV0X3Rva2VucyI6MTV9fQ==","p":"abcdefghijklmnopqrstu"}
+{"bytes":"eyJ0eXBlIjoibWVzc2FnZV9kZWx0YSIsImRlbHRhIjp7InN0b3BfcmVhc29uIjoiZW5kX3R1cm4iLCJzdG9wX3NlcXVlbmNlIjpudWxsfSwidXNhZ2UiOnsiaW5wdXRfdG9rZW5zIjoxMCwiY2FjaGVfY3JlYXRpb25faW5wdXRfdG9rZW5zIjowLCJjYWNoZV9yZWFkX2lucHV0X3Rva2VucyI6MCwib3V0cHV0X3Rva2VucyI6MTV9fQ==","p":"abcdefghijklmnopqrstu"}
 {"bytes":"eyJ0eXBlIjoibWVzc2FnZV9zdG9wIiwiYW1hem9uLWJlZHJvY2staW52b2NhdGlvbk1ldHJpY3MiOnsiaW5wdXRUb2tlbkNvdW50IjoxMCwib3V0cHV0VG9rZW5Db3VudCI6MTUsImludm9jYXRpb25MYXRlbmN5IjoxNzk4LCJmaXJzdEJ5dGVMYXRlbmN5IjoxNTA3fX0=","p":"ab"}
 `,
 			expStatus: http.StatusOK,
@@ -1158,7 +1158,7 @@ event: content_block_stop
 data: {"type":"content_block_stop","index":0}
 
 event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":15}}
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":15}}
 
 event: message_stop
 data: {"type":"message_stop","amazon-bedrock-invocationMetrics":{"inputTokenCount":10,"outputTokenCount":15,"invocationLatency":1798,"firstByteLatency":1507}}

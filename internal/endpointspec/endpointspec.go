@@ -518,7 +518,7 @@ func (GeminiGenerateContentEndpointSpec) ParseBody(
 		return "", nil, false, nil, fmt.Errorf("%w: failed to parse JSON for Gemini generateContent: %w", internalapi.ErrMalformedRequest, err)
 	}
 	// Model and Stream are json:"-" fields populated by the processor from path-derived headers.
-	return internalapi.OriginalModel(req.Model), &req, req.Stream, nil, nil
+	return req.Model, &req, req.Stream, nil, nil
 }
 
 // ParseMultipartBody implements [Spec.ParseMultipartBody]. Gemini generateContent is JSON-only.
@@ -530,7 +530,7 @@ func (GeminiGenerateContentEndpointSpec) ParseMultipartBody([]byte, string, bool
 func (GeminiGenerateContentEndpointSpec) GetTranslator(schema filterapi.VersionedAPISchema, modelNameOverride string) (translator.GeminiGenerateContentTranslator, error) {
 	switch schema.Name {
 	case filterapi.APISchemaGCPVertexAI:
-		return translator.NewGeminiToGCPVertexAITranslator(internalapi.ModelNameOverride(modelNameOverride)), nil
+		return translator.NewGeminiToGCPVertexAITranslator(modelNameOverride), nil
 	default:
 		return nil, fmt.Errorf("unsupported API schema for Gemini generateContent: backend=%s", schema)
 	}
@@ -562,7 +562,7 @@ func (GeminiCachedContentsEndpointSpec) ParseBody(
 	}
 	model := normalizeVertexModelName(req.Model)
 	// cachedContents is never streamed.
-	return internalapi.OriginalModel(model), &req, false, nil, nil
+	return model, &req, false, nil, nil
 }
 
 // normalizeVertexModelName trims any Vertex AI resource prefix from a model identifier and
@@ -587,7 +587,7 @@ func (GeminiCachedContentsEndpointSpec) ParseMultipartBody([]byte, string, bool)
 func (GeminiCachedContentsEndpointSpec) GetTranslator(schema filterapi.VersionedAPISchema, modelNameOverride string) (translator.GeminiCachedContentsTranslator, error) {
 	switch schema.Name {
 	case filterapi.APISchemaGCPVertexAI:
-		return translator.NewGeminiCachedContentsToGCPVertexAITranslator(internalapi.ModelNameOverride(modelNameOverride)), nil
+		return translator.NewGeminiCachedContentsToGCPVertexAITranslator(modelNameOverride), nil
 	default:
 		return nil, fmt.Errorf("unsupported API schema for Gemini cachedContents: backend=%s", schema)
 	}
@@ -804,9 +804,7 @@ func (SpeechEndpointSpec) GetTranslator(
 			modelNameOverride,
 		), nil
 	case filterapi.APISchemaAlibabaDashScope:
-		return translator.NewSpeechOpenAIToDashScopeTranslator(
-			internalapi.ModelNameOverride(modelNameOverride),
-		), nil
+		return translator.NewSpeechOpenAIToDashScopeTranslator(modelNameOverride), nil
 	default:
 		return nil, fmt.Errorf("unsupported API schema for speech: backend=%s", schema)
 	}

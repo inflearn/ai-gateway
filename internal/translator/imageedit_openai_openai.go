@@ -51,7 +51,7 @@ func (o *openAIToOpenAIImageEditsTranslator) RequestBody(original []byte, p *ope
 		if bErr != nil {
 			return nil, nil, fmt.Errorf("failed to extract multipart boundary for model override: %w", bErr)
 		}
-		newBody, err = rebuildMultipartWithModelOverride(original, boundary, string(o.modelNameOverride))
+		newBody, err = rebuildMultipartWithModelOverride(original, boundary, o.modelNameOverride)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to rebuild multipart with model override: %w", err)
 		}
@@ -110,7 +110,8 @@ func extractMultipartBoundary(body []byte) (string, error) {
 	if eol < 3 || !bytes.HasPrefix(body, []byte("--")) {
 		return "", fmt.Errorf("invalid multipart body: missing boundary marker")
 	}
-	return string(body[2:eol]), nil
+	// The guard above ensures 2 <= eol, so the slice bounds are safe.
+	return string(body[2:eol]), nil //nolint:gosec // G602 false positive; eol >= 3 is enforced above.
 }
 
 // rebuildMultipartWithModelOverride rebuilds the multipart body with the given model value

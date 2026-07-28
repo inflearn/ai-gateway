@@ -95,7 +95,7 @@ func (v *referenceGrantValidator) validateReference(
 	// Check if any ReferenceGrant allows this cross-namespace reference.
 	for i := range referenceGrants.Items {
 		grant := &referenceGrants.Items[i]
-		if v.isReferenceGrantValid(grant, routeNamespace, targetGroup, targetKind) {
+		if v.isReferenceGrantValid(grant, routeNamespace, targetGroup, targetKind, gwapiv1b1.ObjectName(targetName)) {
 			return nil
 		}
 	}
@@ -109,12 +109,13 @@ func (v *referenceGrantValidator) validateReference(
 }
 
 // isReferenceGrantValid checks if a ReferenceGrant allows an AIGatewayRoute to reference the
-// target resource identified by targetGroup/targetKind.
+// target resource identified by targetGroup/targetKind/targetName.
 func (v *referenceGrantValidator) isReferenceGrantValid(
 	grant *gwapiv1b1.ReferenceGrant,
 	fromNamespace string,
 	targetGroup gwapiv1b1.Group,
 	targetKind gwapiv1b1.Kind,
+	targetName gwapiv1b1.ObjectName,
 ) bool {
 	// Check if the grant allows references from the route's namespace.
 	fromAllowed := false
@@ -131,7 +132,7 @@ func (v *referenceGrantValidator) isReferenceGrantValid(
 
 	// Check if the grant allows references to the target resource.
 	for _, to := range grant.Spec.To {
-		if v.matchesTo(&to, targetGroup, targetKind) {
+		if v.matchesTo(&to, targetGroup, targetKind, targetName) {
 			return true
 		}
 	}
@@ -159,22 +160,31 @@ func (v *referenceGrantValidator) matchesFrom(from *gwapiv1b1.ReferenceGrantFrom
 	return true
 }
 
-// matchesTo checks if a ReferenceGrantTo matches the target resource identified by targetGroup/targetKind.
-func (v *referenceGrantValidator) matchesTo(to *gwapiv1b1.ReferenceGrantTo, targetGroup gwapiv1b1.Group, targetKind gwapiv1b1.Kind) bool {
-	// Check group
+// matchesTo checks if a ReferenceGrantTo matches the target resource identified by
+// targetGroup/targetKind/targetName.
+//
+// Per the Gateway API spec, ReferenceGrantTo.Name is optional. When set, the grant is scoped
+// to exactly that named resource; when unset, it acts as a wildcard covering every resource of
+// the group/kind. Previously we ignored the name field entirely, which quietly promoted any
+// name-scoped grant into a wildcard and let an AIGatewayRoute reference *any* backend of the
+// same kind in the target namespace — not what the grant author meant.
+//
+// https://gateway-api.sigs.k8s.io/api-types/referencegrant/
+func (v *referenceGrantValidator) matchesTo(
+	to *gwapiv1b1.ReferenceGrantTo,
+	targetGroup gwapiv1b1.Group,
+	targetKind gwapiv1b1.Kind,
+	targetName gwapiv1b1.ObjectName,
+) bool {
 	if to.Group != targetGroup {
 		return false
 	}
-
-	// Check kind
 	if to.Kind != targetKind {
 		return false
 	}
-
-	// If a specific name is specified, we would need to check it here,
-	// but ReferenceGrant typically doesn't specify individual resource names
-	// (that's handled by the Name field which is optional in the spec)
-	// For now, we only check group and kind as per Gateway API spec
-
+	// Name is optional in ReferenceGrantTo. Unset == wildcard; set == exact match required.
+	if to.Name != nil && *to.Name != targetName {
+		return false
+	}
 	return true
 }

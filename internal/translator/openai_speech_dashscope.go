@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/envoyproxy/ai-gateway/internal/apischema/dashscope"
@@ -31,6 +33,33 @@ const dashScopeSpeechPath = "/api/v1/services/aigc/multimodal-generation/generat
 // dashScopeAudioContentType is the default MIME type DashScope returns for the signed audio URL.
 // Qwen-TTS delivers WAV by default; response_format from the OpenAI request is currently ignored.
 const dashScopeAudioContentType = "audio/wav"
+
+// dashScopeAllowedAudioHostSuffix restricts the hosts the audio-URL fetcher will follow. The signed
+// URL comes straight from an upstream JSON body, so treat it as untrusted input: anchor it to
+// Aliyun-owned hostnames to prevent a spoofed / hijacked response from redirecting the fetch at an
+// arbitrary host (SSRF).
+const dashScopeAllowedAudioHostSuffix = ".aliyuncs.com"
+
+// validateDashScopeAudioURL enforces the SSRF-prevention rules on the signed audio URL returned by
+// DashScope: HTTPS only, and hostname must be aliyuncs.com or a subdomain of it. The suffix check
+// is anchored with a leading dot so hostnames like `evil-aliyuncs.com` do not slip through.
+func validateDashScopeAudioURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("dashscope speech: invalid audio URL: %w", err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("dashscope speech: audio URL scheme must be https, got %q", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("dashscope speech: audio URL is missing host: %s", raw)
+	}
+	if host != "aliyuncs.com" && !strings.HasSuffix(host, dashScopeAllowedAudioHostSuffix) {
+		return fmt.Errorf("dashscope speech: audio URL host %q not in allowed *%s", host, dashScopeAllowedAudioHostSuffix)
+	}
+	return nil
+}
 
 // dashScopeAudioFetcher downloads the audio pointed to by DashScope's signed URL. Overridable
 // in tests to avoid real network calls. Reads the full body — TTS payloads are small (tens of
@@ -153,6 +182,9 @@ func (o *openAIToDashScopeSpeechTranslator) ResponseBody(_ map[string]string, bo
 	}
 	if envelope.Output.Audio.URL == "" {
 		return nil, nil, tokenUsage, "", fmt.Errorf("dashscope speech: response missing output.audio.url; body=%s", truncate(raw, 512))
+	}
+	if err := validateDashScopeAudioURL(envelope.Output.Audio.URL); err != nil {
+		return nil, nil, tokenUsage, "", err
 	}
 
 	audio, err := dashScopeAudioFetcher(context.Background(), envelope.Output.Audio.URL)

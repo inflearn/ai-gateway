@@ -96,12 +96,12 @@ func TestSpeechOpenAIToDashScope_ResponseBody(t *testing.T) {
 		_, _, err := tr.RequestBody(nil, &openai.SpeechRequest{Model: "qwen3-tts-flash", Input: "x", Voice: "v"}, false)
 		require.NoError(t, err)
 
-		envelope := `{"request_id":"rid","output":{"audio":{"url":"https://dashscope.example/audio/abc.wav","id":"aid"}},"usage":{"characters":3}}`
+		envelope := `{"request_id":"rid","output":{"audio":{"url":"https://dashscope-intl.aliyuncs.com/audio/abc.wav","id":"aid"}},"usage":{"characters":3}}`
 		hm, body, _, respModel, err := tr.ResponseBody(nil, strings.NewReader(envelope), true, nil)
 		require.NoError(t, err)
 		require.Equal(t, audioPayload, body)
 		require.Equal(t, "qwen3-tts-flash", string(respModel))
-		require.Equal(t, "https://dashscope.example/audio/abc.wav", fetchedURL)
+		require.Equal(t, "https://dashscope-intl.aliyuncs.com/audio/abc.wav", fetchedURL)
 
 		// content-length must match downloaded audio byte length.
 		var cl string
@@ -132,7 +132,7 @@ func TestSpeechOpenAIToDashScope_ResponseBody(t *testing.T) {
 		_, _, err := tr.RequestBody(nil, &openai.SpeechRequest{Model: "m", Input: "x", Voice: "v"}, false)
 		require.NoError(t, err)
 
-		envelope := `{"output":{"audio":{"url":"https://dashscope.example/x"}}}`
+		envelope := `{"output":{"audio":{"url":"https://dashscope-intl.aliyuncs.com/x"}}}`
 		_, _, _, _, err = tr.ResponseBody(nil, strings.NewReader(envelope), true, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "boom")
@@ -142,6 +142,52 @@ func TestSpeechOpenAIToDashScope_ResponseBody(t *testing.T) {
 		tr := NewSpeechOpenAIToDashScopeTranslator("")
 		_, _, _, _, err := tr.ResponseBody(nil, strings.NewReader("not json"), true, nil)
 		require.Error(t, err)
+	})
+
+	// SSRF guard: reject anything that isn't https on an *.aliyuncs.com host. Runs before
+	// the fetcher, so the stub isn't consulted.
+	t.Run("rejects non-https audio URL", func(t *testing.T) {
+		called := false
+		dashScopeAudioFetcher = func(_ context.Context, _ string) ([]byte, error) {
+			called = true
+			return nil, nil
+		}
+		tr := NewSpeechOpenAIToDashScopeTranslator("")
+		_, _, err := tr.RequestBody(nil, &openai.SpeechRequest{Model: "m", Input: "x", Voice: "v"}, false)
+		require.NoError(t, err)
+		envelope := `{"output":{"audio":{"url":"http://dashscope-intl.aliyuncs.com/x"}}}`
+		_, _, _, _, err = tr.ResponseBody(nil, strings.NewReader(envelope), true, nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "scheme must be https")
+		require.False(t, called, "fetcher must not run when URL fails validation")
+	})
+
+	t.Run("rejects non-aliyuncs.com host", func(t *testing.T) {
+		called := false
+		dashScopeAudioFetcher = func(_ context.Context, _ string) ([]byte, error) {
+			called = true
+			return nil, nil
+		}
+		tr := NewSpeechOpenAIToDashScopeTranslator("")
+		_, _, err := tr.RequestBody(nil, &openai.SpeechRequest{Model: "m", Input: "x", Voice: "v"}, false)
+		require.NoError(t, err)
+		envelope := `{"output":{"audio":{"url":"https://evil.example.com/x"}}}`
+		_, _, _, _, err = tr.ResponseBody(nil, strings.NewReader(envelope), true, nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "not in allowed")
+		require.False(t, called, "fetcher must not run when URL fails validation")
+	})
+
+	t.Run("rejects lookalike aliyuncs.com host", func(t *testing.T) {
+		// The suffix check must anchor with the leading dot so a host like
+		// `evil-aliyuncs.com` is not accepted.
+		tr := NewSpeechOpenAIToDashScopeTranslator("")
+		_, _, err := tr.RequestBody(nil, &openai.SpeechRequest{Model: "m", Input: "x", Voice: "v"}, false)
+		require.NoError(t, err)
+		envelope := `{"output":{"audio":{"url":"https://evil-aliyuncs.com/x"}}}`
+		_, _, _, _, err = tr.ResponseBody(nil, strings.NewReader(envelope), true, nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "not in allowed")
 	})
 }
 
@@ -173,7 +219,7 @@ func TestSpeechOpenAIToDashScope_ResponseBody_LargeReader(t *testing.T) {
 	_, _, err := tr.RequestBody(nil, &openai.SpeechRequest{Model: "m", Input: "x", Voice: "v"}, false)
 	require.NoError(t, err)
 
-	envelope := `{"output":{"audio":{"url":"https://ex"}}}`
+	envelope := `{"output":{"audio":{"url":"https://dashscope-intl.aliyuncs.com/ex"}}}`
 	_, body, _, _, err := tr.ResponseBody(nil, io.NopCloser(strings.NewReader(envelope)), true, nil)
 	require.NoError(t, err)
 	require.Len(t, body, 128*1024)

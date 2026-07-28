@@ -63,6 +63,12 @@ type SpeechOutput struct {
 }
 
 // SpeechOutputAudio is the audio pointer within a DashScope response.
+//
+// Note: DashScope's non-streaming reply also carries an `expires_at` field encoded as a Unix
+// timestamp (number, e.g. 1785313180). We intentionally do NOT model it here — the translator
+// only follows `url` and does not care when the signed URL expires (the client either fetches
+// via the gateway immediately or the request errors out). Modelling it as string would fail
+// json.Unmarshal against the actual number value.
 type SpeechOutputAudio struct {
 	// URL is a signed HTTP(S) URL to the synthesised audio file. Valid ~24h.
 	URL string `json:"url"`
@@ -71,6 +77,4 @@ type SpeechOutputAudio struct {
 	Data string `json:"data,omitempty"`
 	// ID is DashScope's audio object identifier.
 	ID string `json:"id,omitempty"`
-	// ExpiresAt is an optional expiry timestamp on the signed URL (RFC3339).
-	ExpiresAt string `json:"expires_at,omitempty"`
 }

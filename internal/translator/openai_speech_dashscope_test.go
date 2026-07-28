@@ -144,6 +144,24 @@ func TestSpeechOpenAIToDashScope_ResponseBody(t *testing.T) {
 		require.Error(t, err)
 	})
 
+	// Regression: DashScope's real response includes `expires_at` encoded as a Unix timestamp
+	// number, not an RFC3339 string. Our schema no longer models that field so it must be
+	// silently ignored during unmarshal instead of blowing up with a type-mismatch error.
+	t.Run("ignores unknown numeric expires_at field", func(t *testing.T) {
+		audioPayload := []byte("RIFF....WAVE.fakeaudio")
+		dashScopeAudioFetcher = func(_ context.Context, _ string) ([]byte, error) {
+			return audioPayload, nil
+		}
+		tr := NewSpeechOpenAIToDashScopeTranslator("")
+		_, _, err := tr.RequestBody(nil, &openai.SpeechRequest{Model: "m", Input: "x", Voice: "v"}, false)
+		require.NoError(t, err)
+
+		envelope := `{"request_id":"rid","output":{"audio":{"url":"https://dashscope-intl.aliyuncs.com/a.wav","data":"","expires_at":1785313180,"id":"aid"}},"usage":{"characters":3}}`
+		_, body, _, _, err := tr.ResponseBody(nil, strings.NewReader(envelope), true, nil)
+		require.NoError(t, err)
+		require.Equal(t, audioPayload, body)
+	})
+
 	// SSRF guard: reject anything that isn't https on an *.aliyuncs.com host. Runs before
 	// the fetcher, so the stub isn't consulted.
 	t.Run("rejects non-https audio URL", func(t *testing.T) {

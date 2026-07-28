@@ -15,7 +15,7 @@ package v1alpha1
 type VersionedAPISchema struct {
 	// Name is the name of the API schema of the AIGatewayRoute or AIServiceBackend.
 	//
-	// +kubebuilder:validation:Enum=OpenAI;Cohere;AWSBedrock;AzureOpenAI;GCPVertexAI;GCPAnthropic;Anthropic;AWSAnthropic
+	// +kubebuilder:validation:Enum=OpenAI;Cohere;AWSBedrock;AzureOpenAI;GCPVertexAI;GCPAnthropic;Anthropic;AWSAnthropic;AlibabaDashScope
 	Name APISchema `json:"name"`
 
 	// Version is the version of the API schema.
@@ -89,6 +89,13 @@ const (
 	// https://aws.amazon.com/bedrock/anthropic/
 	// https://docs.claude.com/en/api/claude-on-amazon-bedrock
 	APISchemaAWSAnthropic APISchema = "AWSAnthropic"
+	// APISchemaAlibabaDashScope is the schema for Alibaba Cloud Model Studio (DashScope) native APIs,
+	// including Qwen-TTS speech synthesis via /api/v1/services/aigc/multimodal-generation/generation.
+	// Alibaba's OpenAI-compatible mode (/compatible-mode/v1) does not expose audio/speech, so DashScope
+	// native is required for TTS models. Use APISchemaOpenAI (with prefix=/compatible-mode/v1) for chat.
+	//
+	// https://www.alibabacloud.com/help/en/model-studio/qwen-tts-api
+	APISchemaAlibabaDashScope APISchema = "AlibabaDashScope"
 )
 
 const (

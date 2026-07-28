@@ -49,7 +49,7 @@ func NewGeminiToGCPVertexAITranslator(modelNameOverride internalapi.ModelNameOve
 func (g *geminiToGCPVertexAITranslator) RequestBody(_ []byte, body *gcp.GenerateContentRequest, _ bool) (
 	newHeaders []internalapi.Header, newBody []byte, err error,
 ) {
-	g.requestModel = internalapi.RequestModel(body.Model)
+	g.requestModel = body.Model
 	if g.modelNameOverride != "" {
 		g.requestModel = g.modelNameOverride
 	}
@@ -57,9 +57,9 @@ func (g *geminiToGCPVertexAITranslator) RequestBody(_ []byte, body *gcp.Generate
 
 	var path string
 	if g.stream {
-		path = buildGCPModelPathSuffix(gcpModelPublisherGoogle, string(g.requestModel), gcpMethodStreamGenerateContent, "alt=sse")
+		path = buildGCPModelPathSuffix(gcpModelPublisherGoogle, g.requestModel, gcpMethodStreamGenerateContent, "alt=sse")
 	} else {
-		path = buildGCPModelPathSuffix(gcpModelPublisherGoogle, string(g.requestModel), gcpMethodGenerateContent)
+		path = buildGCPModelPathSuffix(gcpModelPublisherGoogle, g.requestModel, gcpMethodGenerateContent)
 	}
 
 	// Re-marshal: json:"-" fields (Model, Stream) are not serialised.
@@ -108,7 +108,7 @@ func (g *geminiToGCPVertexAITranslator) ResponseBody(_ map[string]string, body i
 	}
 
 	if gcpResp.ModelVersion != "" {
-		responseModel = internalapi.ResponseModel(gcpResp.ModelVersion)
+		responseModel = gcpResp.ModelVersion
 	}
 
 	if u := gcpResp.UsageMetadata; u != nil {

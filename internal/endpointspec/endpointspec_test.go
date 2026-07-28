@@ -15,8 +15,8 @@ import (
 	"google.golang.org/genai"
 	"k8s.io/utils/ptr"
 
-	gcpschema "github.com/envoyproxy/ai-gateway/internal/apischema/gcp"
 	cohereschema "github.com/envoyproxy/ai-gateway/internal/apischema/cohere"
+	gcpschema "github.com/envoyproxy/ai-gateway/internal/apischema/gcp"
 	"github.com/envoyproxy/ai-gateway/internal/apischema/openai"
 	"github.com/envoyproxy/ai-gateway/internal/filterapi"
 	"github.com/envoyproxy/ai-gateway/internal/json"
@@ -1137,7 +1137,7 @@ func TestGeminiGenerateContentEndpointSpec_ParseBody(t *testing.T) {
 		require.NoError(t, err)
 		// Model and Stream are json:"-" fields — they are empty after unmarshaling.
 		// The processor fills them from synthetic headers later.
-		require.Equal(t, "", model)
+		require.Empty(t, model)
 		require.False(t, stream)
 		require.NotNil(t, parsed)
 		require.Nil(t, mutated)
@@ -1539,7 +1539,7 @@ func TestGeminiCachedContentsEndpointSpec_ParseBody(t *testing.T) {
 	t.Run("empty body (GET/DELETE) returns zero value", func(t *testing.T) {
 		model, req, stream, mutated, err := spec.ParseBody(nil, false)
 		require.NoError(t, err)
-		require.Equal(t, "", string(model))
+		require.Empty(t, model)
 		require.NotNil(t, req)
 		require.False(t, stream)
 		require.Nil(t, mutated)
@@ -1549,7 +1549,7 @@ func TestGeminiCachedContentsEndpointSpec_ParseBody(t *testing.T) {
 		body := []byte(`{"model":"projects/p/locations/us-central1/publishers/google/models/gemini-1.5-pro","ttl":"3600s"}`)
 		model, req, stream, _, err := spec.ParseBody(body, false)
 		require.NoError(t, err)
-		require.Equal(t, "gemini-1.5-pro", string(model), "OriginalModel must be the short name so AIGatewayRoute headers match")
+		require.Equal(t, "gemini-1.5-pro", model, "OriginalModel must be the short name so AIGatewayRoute headers match")
 		require.NotNil(t, req)
 		// The body struct keeps the original full path for the translator to act on.
 		require.Equal(t, "projects/p/locations/us-central1/publishers/google/models/gemini-1.5-pro", req.Model)
@@ -1561,7 +1561,7 @@ func TestGeminiCachedContentsEndpointSpec_ParseBody(t *testing.T) {
 		body := []byte(`{"model":"gemini-2.5-flash","ttl":"60s"}`)
 		model, _, _, _, err := spec.ParseBody(body, false)
 		require.NoError(t, err)
-		require.Equal(t, "gemini-2.5-flash", string(model))
+		require.Equal(t, "gemini-2.5-flash", model)
 	})
 
 	t.Run("invalid JSON returns malformed request", func(t *testing.T) {

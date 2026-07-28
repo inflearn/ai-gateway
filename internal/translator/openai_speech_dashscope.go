@@ -116,16 +116,21 @@ type openAIToDashScopeSpeechTranslator struct {
 //	{"model":"qwen3-tts-flash","input":{"text":"hello","voice":"Cherry","language_type":"Auto"}}
 //
 // Voice, instructions, response_format, speed, and stream_format are not translated:
-// - voice: passed through verbatim — the AIGatewayRoute owner is expected to supply a
-//   DashScope-side voice name (e.g. "Cherry"); OpenAI voice presets do not have a natural
-//   mapping and forcing one here would silently pick the wrong timbre.
-// - instructions/speed: DashScope has no equivalent.
-// - response_format: DashScope's non-streaming response is always WAV via URL; ignored here
-//   and the outbound content-type is set to audio/wav in ResponseHeaders.
-// - stream_format: only non-streaming is implemented in this first cut; SSE support would
-//   require calling DashScope's streaming synthesis API (different endpoint) and is out of
-//   scope until we see demand.
-func (o *openAIToDashScopeSpeechTranslator) RequestBody(original []byte, req *openai.SpeechRequest, forceBodyMutation bool) (
+//   - voice: passed through verbatim — the AIGatewayRoute owner is expected to supply a
+//     DashScope-side voice name (e.g. "Cherry"); OpenAI voice presets do not have a natural
+//     mapping and forcing one here would silently pick the wrong timbre.
+//   - instructions/speed: DashScope has no equivalent.
+//   - response_format: DashScope's non-streaming response is always WAV via URL; ignored here
+//     and the outbound content-type is set to audio/wav in ResponseHeaders.
+//   - stream_format: only non-streaming is implemented in this first cut; SSE support would
+//     require calling DashScope's streaming synthesis API (different endpoint) and is out of
+//     scope until we see demand.
+//
+// The `original` byte slice is intentionally ignored — the DashScope wire format differs
+// enough from the OpenAI request that we always re-marshal from the parsed struct rather
+// than patching the original body. Same reason forceBodyMutation is ignored: the response is
+// always a body replacement, never a passthrough.
+func (o *openAIToDashScopeSpeechTranslator) RequestBody(_ []byte, req *openai.SpeechRequest, _ bool) (
 	newHeaders []internalapi.Header, newBody []byte, err error,
 ) {
 	if req == nil {
@@ -134,7 +139,7 @@ func (o *openAIToDashScopeSpeechTranslator) RequestBody(original []byte, req *op
 
 	model := req.Model
 	if o.modelNameOverride != "" {
-		model = string(o.modelNameOverride)
+		model = o.modelNameOverride
 	}
 	o.requestModel = model
 
@@ -154,7 +159,6 @@ func (o *openAIToDashScopeSpeechTranslator) RequestBody(original []byte, req *op
 		{pathHeaderName, o.path},
 		{contentLengthHeaderName, strconv.Itoa(len(newBody))},
 	}
-	_ = forceBodyMutation // always a shape change → always mutate.
 	return
 }
 
@@ -186,7 +190,7 @@ func (o *openAIToDashScopeSpeechTranslator) ResponseBody(_ map[string]string, bo
 	if envelope.Output.Audio.URL == "" {
 		return nil, nil, tokenUsage, "", fmt.Errorf("dashscope speech: response missing output.audio.url; body=%s", truncate(raw, 512))
 	}
-	if err := validateDashScopeAudioURL(envelope.Output.Audio.URL); err != nil {
+	if err = validateDashScopeAudioURL(envelope.Output.Audio.URL); err != nil {
 		return nil, nil, tokenUsage, "", err
 	}
 

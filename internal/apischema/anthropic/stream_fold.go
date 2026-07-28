@@ -61,7 +61,9 @@ func MessagesResponseFromStream(chunks []*MessagesStreamChunk) *MessagesResponse
 
 		case event.ContentBlockDelta != nil:
 			idx := event.ContentBlockDelta.Index
-			if idx < len(response.Content) {
+			// The upper-bound check alone (`idx < len`) is satisfied by negative values in Go,
+			// which would then panic on the slice index below. Reject negatives explicitly.
+			if idx >= 0 && idx < len(response.Content) {
 				block := &response.Content[idx]
 				delta := event.ContentBlockDelta.Delta
 
@@ -84,7 +86,9 @@ func MessagesResponseFromStream(chunks []*MessagesStreamChunk) *MessagesResponse
 		case event.ContentBlockStop != nil:
 			idx := event.ContentBlockStop.Index
 			if jsonStr, ok := toolInputs[idx]; ok {
-				if idx < len(response.Content) && response.Content[idx].Tool != nil {
+				// idx >= 0 guards the slice access against a negative index from a
+				// hostile / malformed upstream (see ContentBlockDelta above).
+				if idx >= 0 && idx < len(response.Content) && response.Content[idx].Tool != nil {
 					var input map[string]any
 					if err := json.Unmarshal([]byte(jsonStr), &input); err == nil {
 						response.Content[idx].Tool.Input = input

@@ -239,6 +239,42 @@ func TestConvertSSEToResponse(t *testing.T) {
 			},
 		},
 		{
+			// Regression: negative index used to slip through the delta / stop branches
+			// (idx < len(response.Content) is true for negatives in Go) and panic on the
+			// slice access. Now guarded by isValidContentBlockIndex.
+			name: "negative delta and stop indices after a valid start do not panic",
+			chunks: []*anthropic.MessagesStreamChunk{
+				{
+					MessageStart: &anthropic.MessagesStreamChunkMessageStart{
+						ID: "msg_neg2", Model: "claude-3", Role: "assistant",
+						Usage: &anthropic.Usage{InputTokens: 1},
+					},
+				},
+				{
+					ContentBlockStart: &anthropic.MessagesStreamChunkContentBlockStart{
+						Index:        0,
+						ContentBlock: anthropic.MessagesContentBlock{Text: &anthropic.TextBlock{Type: "text"}},
+					},
+				},
+				{
+					ContentBlockDelta: &anthropic.MessagesStreamChunkContentBlockDelta{
+						Index: -5,
+						Delta: anthropic.ContentBlockDelta{Type: "text_delta", Text: "malicious"},
+					},
+				},
+				{
+					ContentBlockStop: &anthropic.MessagesStreamChunkContentBlockStop{Index: -1},
+				},
+			},
+			want: &anthropic.MessagesResponse{
+				ID: "msg_neg2", Model: "claude-3", Role: "assistant",
+				Usage: &anthropic.Usage{InputTokens: 1},
+				Content: []anthropic.MessagesContentBlock{
+					{Text: &anthropic.TextBlock{Type: "text", Text: ""}},
+				},
+			},
+		},
+		{
 			name: "content block index at cap is ignored",
 			chunks: []*anthropic.MessagesStreamChunk{
 				{

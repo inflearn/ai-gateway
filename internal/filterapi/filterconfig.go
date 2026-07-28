@@ -178,6 +178,10 @@ const (
 	// Used for Claude models hosted on AWS Bedrock. Supports both OpenAI and Anthropic input formats
 	// depending on the endpoint path, similar to APISchemaGCPAnthropic.
 	APISchemaAWSAnthropic APISchemaName = "AWSAnthropic"
+	// APISchemaAlibabaDashScope represents the Alibaba Cloud Model Studio (DashScope) native API schema.
+	// Used for TTS models (Qwen-TTS, Qwen3-TTS) that are not exposed through DashScope's
+	// OpenAI-compatible mode. See https://www.alibabacloud.com/help/en/model-studio/qwen-tts-api.
+	APISchemaAlibabaDashScope APISchemaName = "AlibabaDashScope"
 )
 
 // RouteRuleName is the name of the route rule.

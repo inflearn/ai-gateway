@@ -77,7 +77,7 @@ func (g *geminiCachedContentsToGCPVertexAITranslator) RequestBody(
 	if body != nil && body.Model != "" {
 		desired := body.Model
 		if g.modelNameOverride != "" {
-			desired = rewriteVertexModelName(desired, string(g.modelNameOverride))
+			desired = rewriteVertexModelName(desired, g.modelNameOverride)
 		}
 		desired = expandToVertexFullModelPath(desired, os.Getenv(envGCPProject), os.Getenv(envGCPLocation))
 		if desired != body.Model {

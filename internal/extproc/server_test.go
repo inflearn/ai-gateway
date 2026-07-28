@@ -1320,10 +1320,11 @@ func TestServer_RegisterPrefix_FallbackToNextEntry(t *testing.T) {
 			return nil
 		}
 		after := path[idx+len(seg):]
-		if !strings.Contains(after, ":") {
+		model, _, ok := strings.Cut(after, ":")
+		if !ok {
 			return nil
 		}
-		return map[string]string{"x-aigw-path-model": after[:strings.Index(after, ":")]}
+		return map[string]string{"x-aigw-path-model": model}
 	})
 
 	cacheProc := &mockProcessor{}

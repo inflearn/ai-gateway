@@ -152,7 +152,7 @@ func TestSpeechOpenAIToDashScope_ResponseBody(t *testing.T) {
 		hm, body, _, respModel, err := tr.ResponseBody(nil, strings.NewReader(envelope), true, nil)
 		require.NoError(t, err)
 		require.Equal(t, audioPayload, body)
-		require.Equal(t, "qwen3-tts-flash", string(respModel))
+		require.Equal(t, "qwen3-tts-flash", respModel)
 		require.Equal(t, "https://dashscope-intl.aliyuncs.com/audio/abc.wav", fetchedURL)
 
 		// content-length must match downloaded audio byte length.
@@ -236,7 +236,7 @@ func TestSpeechOpenAIToDashScope_ResponseBody(t *testing.T) {
 	// DashScope actually returns plain-http URLs in the signed envelope, so http on an
 	// allowed host must be accepted (host allowlist is the real defence).
 	t.Run("accepts http on aliyuncs.com host", func(t *testing.T) {
-		dashScopeAudioFetcher = func(_ context.Context, url string) ([]byte, error) {
+		dashScopeAudioFetcher = func(_ context.Context, _ string) ([]byte, error) {
 			return []byte("audio"), nil
 		}
 		tr := NewSpeechOpenAIToDashScopeTranslator("")

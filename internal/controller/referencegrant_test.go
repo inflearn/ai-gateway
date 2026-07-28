@@ -442,6 +442,36 @@ func TestReferenceGrantValidator_MatchesFrom_WrongNamespace(t *testing.T) {
 	require.False(t, result, "should return false for wrong namespace")
 }
 
+// TestReferenceGrantValidator_MatchesTo_Name locks in the name-filter behaviour: when
+// ReferenceGrantTo.Name is set, the grant must apply only to the named resource; when unset,
+// it acts as a wildcard for the group/kind.
+func TestReferenceGrantValidator_MatchesTo_Name(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gwapiv1b1.Install(scheme)
+	_ = aigv1a1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	validator := newReferenceGrantValidator(fakeClient)
+
+	t.Run("name unset → wildcard, matches any name", func(t *testing.T) {
+		to := &gwapiv1b1.ReferenceGrantTo{Group: aiServiceBackendGroup, Kind: aiServiceBackendKind}
+		require.True(t, validator.matchesTo(to, aiServiceBackendGroup, aiServiceBackendKind, "any-backend"))
+	})
+
+	t.Run("name set and matches → allowed", func(t *testing.T) {
+		named := gwapiv1b1.ObjectName("target-backend")
+		to := &gwapiv1b1.ReferenceGrantTo{Group: aiServiceBackendGroup, Kind: aiServiceBackendKind, Name: &named}
+		require.True(t, validator.matchesTo(to, aiServiceBackendGroup, aiServiceBackendKind, "target-backend"))
+	})
+
+	t.Run("name set but differs → denied", func(t *testing.T) {
+		named := gwapiv1b1.ObjectName("target-backend")
+		to := &gwapiv1b1.ReferenceGrantTo{Group: aiServiceBackendGroup, Kind: aiServiceBackendKind, Name: &named}
+		require.False(t, validator.matchesTo(to, aiServiceBackendGroup, aiServiceBackendKind, "other-backend"),
+			"name-scoped grant must not promote to a wildcard")
+	})
+}
+
 // TestReferenceGrantValidator_MatchesTo_WrongGroup tests matchesTo with wrong group
 func TestReferenceGrantValidator_MatchesTo_WrongGroup(t *testing.T) {
 	scheme := runtime.NewScheme()
@@ -456,7 +486,7 @@ func TestReferenceGrantValidator_MatchesTo_WrongGroup(t *testing.T) {
 		Kind:  aiServiceBackendKind,
 	}
 
-	result := validator.matchesTo(to, aiServiceBackendGroup, aiServiceBackendKind)
+	result := validator.matchesTo(to, aiServiceBackendGroup, aiServiceBackendKind, "target-backend")
 	require.False(t, result, "should return false for wrong group")
 }
 
@@ -474,7 +504,7 @@ func TestReferenceGrantValidator_MatchesTo_WrongKind(t *testing.T) {
 		Kind:  "WrongKind",
 	}
 
-	result := validator.matchesTo(to, aiServiceBackendGroup, aiServiceBackendKind)
+	result := validator.matchesTo(to, aiServiceBackendGroup, aiServiceBackendKind, "target-backend")
 	require.False(t, result, "should return false for wrong kind")
 }
 

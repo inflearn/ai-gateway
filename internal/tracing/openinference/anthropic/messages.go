@@ -233,6 +233,19 @@ func buildResponseAttributes(resp *anthropic.MessagesResponse, config *openinfer
 	return attrs
 }
 
+// maxContentBlocks caps how large a single Anthropic streaming message's content array can
+// grow inside the tracing span. Well-formed responses stay well below this; the cap exists so
+// a hostile / buggy upstream cannot force a giant allocation by sending an out-of-range index.
+const maxContentBlocks = 1000
+
+// isValidContentBlockIndex applies the same non-negative / bounded check to every SSE index
+// path (ContentBlockStart / ContentBlockDelta / ContentBlockStop). Negative indices used to
+// slip through the delta/stop branches — the length check alone (`idx < len`) is satisfied by
+// negative values in Go, which then panic on the slice index below.
+func isValidContentBlockIndex(idx int) bool {
+	return idx >= 0 && idx < maxContentBlocks
+}
+
 // convertSSEToResponse converts a complete SSE stream to a single JSON-encoded
 // openai.ChatCompletionResponse. This will not serialize zero values including
 // fields whose values are zero or empty, or nested objects where all fields
@@ -270,9 +283,7 @@ func convertSSEToResponse(chunks []*anthropic.MessagesStreamChunk) *anthropic.Me
 
 		case event.ContentBlockStart != nil:
 			idx := event.ContentBlockStart.Index
-			// Guard against negative or unreasonably large indices from a hostile upstream.
-			const maxContentBlocks = 1000
-			if idx < 0 || idx >= maxContentBlocks {
+			if !isValidContentBlockIndex(idx) {
 				continue
 			}
 			// Grow slice if needed.
@@ -285,28 +296,35 @@ func convertSSEToResponse(chunks []*anthropic.MessagesStreamChunk) *anthropic.Me
 
 		case event.ContentBlockDelta != nil:
 			idx := event.ContentBlockDelta.Index
-			if idx < len(response.Content) {
-				block := &response.Content[idx]
-				delta := event.ContentBlockDelta.Delta
+			// The upper-bound check (idx < len) already blocks out-of-range access, but a
+			// negative index from a hostile / malformed upstream would satisfy `idx < len`
+			// yet still panic on the slice index below. Reject negatives explicitly.
+			if !isValidContentBlockIndex(idx) || idx >= len(response.Content) {
+				continue
+			}
+			block := &response.Content[idx]
+			delta := event.ContentBlockDelta.Delta
 
-				if block.Text != nil && delta.Text != "" {
-					block.Text.Text += delta.Text
+			if block.Text != nil && delta.Text != "" {
+				block.Text.Text += delta.Text
+			}
+			if block.Tool != nil && delta.PartialJSON != "" {
+				toolInputs[idx] += delta.PartialJSON
+			}
+			if block.Thinking != nil {
+				if delta.Thinking != "" {
+					block.Thinking.Thinking += delta.Thinking
 				}
-				if block.Tool != nil && delta.PartialJSON != "" {
-					toolInputs[idx] += delta.PartialJSON
-				}
-				if block.Thinking != nil {
-					if delta.Thinking != "" {
-						block.Thinking.Thinking += delta.Thinking
-					}
-					if delta.Signature != "" {
-						block.Thinking.Signature = delta.Signature
-					}
+				if delta.Signature != "" {
+					block.Thinking.Signature = delta.Signature
 				}
 			}
 
 		case event.ContentBlockStop != nil:
 			idx := event.ContentBlockStop.Index
+			if !isValidContentBlockIndex(idx) {
+				continue
+			}
 			if jsonStr, ok := toolInputs[idx]; ok {
 				if idx < len(response.Content) && response.Content[idx].Tool != nil {
 					var input map[string]any

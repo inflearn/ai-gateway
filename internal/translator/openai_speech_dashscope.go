@@ -41,15 +41,18 @@ const dashScopeAudioContentType = "audio/wav"
 const dashScopeAllowedAudioHostSuffix = ".aliyuncs.com"
 
 // validateDashScopeAudioURL enforces the SSRF-prevention rules on the signed audio URL returned by
-// DashScope: HTTPS only, and hostname must be aliyuncs.com or a subdomain of it. The suffix check
-// is anchored with a leading dot so hostnames like `evil-aliyuncs.com` do not slip through.
+// DashScope. The primary defence is the host allowlist — the URL must resolve to aliyuncs.com or
+// a subdomain of it, anchored with a leading dot so lookalikes such as `evil-aliyuncs.com` do not
+// pass. Both http and https are accepted because DashScope's signed URLs are served over plain
+// http in practice; the TTS audio payload is not confidentiality-sensitive, and the host
+// allowlist prevents the fetch from being redirected off Aliyun infrastructure.
 func validateDashScopeAudioURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("dashscope speech: invalid audio URL: %w", err)
 	}
-	if u.Scheme != "https" {
-		return fmt.Errorf("dashscope speech: audio URL scheme must be https, got %q", u.Scheme)
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return fmt.Errorf("dashscope speech: audio URL scheme must be http or https, got %q", u.Scheme)
 	}
 	host := u.Hostname()
 	if host == "" {

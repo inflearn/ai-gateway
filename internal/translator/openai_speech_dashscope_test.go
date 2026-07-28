@@ -162,9 +162,10 @@ func TestSpeechOpenAIToDashScope_ResponseBody(t *testing.T) {
 		require.Equal(t, audioPayload, body)
 	})
 
-	// SSRF guard: reject anything that isn't https on an *.aliyuncs.com host. Runs before
-	// the fetcher, so the stub isn't consulted.
-	t.Run("rejects non-https audio URL", func(t *testing.T) {
+	// SSRF guard: rejects any scheme other than http/https. Runs before the fetcher, so the
+	// stub isn't consulted. HTTP is intentionally allowed — DashScope's signed URLs are
+	// plain-http in practice and the host allowlist is the actual defence.
+	t.Run("rejects unsupported audio URL scheme", func(t *testing.T) {
 		called := false
 		dashScopeAudioFetcher = func(_ context.Context, _ string) ([]byte, error) {
 			called = true
@@ -173,11 +174,26 @@ func TestSpeechOpenAIToDashScope_ResponseBody(t *testing.T) {
 		tr := NewSpeechOpenAIToDashScopeTranslator("")
 		_, _, err := tr.RequestBody(nil, &openai.SpeechRequest{Model: "m", Input: "x", Voice: "v"}, false)
 		require.NoError(t, err)
-		envelope := `{"output":{"audio":{"url":"http://dashscope-intl.aliyuncs.com/x"}}}`
+		envelope := `{"output":{"audio":{"url":"file:///etc/passwd"}}}`
 		_, _, _, _, err = tr.ResponseBody(nil, strings.NewReader(envelope), true, nil)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "scheme must be https")
+		require.Contains(t, err.Error(), "scheme must be http or https")
 		require.False(t, called, "fetcher must not run when URL fails validation")
+	})
+
+	// DashScope actually returns plain-http URLs in the signed envelope, so http on an
+	// allowed host must be accepted (host allowlist is the real defence).
+	t.Run("accepts http on aliyuncs.com host", func(t *testing.T) {
+		dashScopeAudioFetcher = func(_ context.Context, url string) ([]byte, error) {
+			return []byte("audio"), nil
+		}
+		tr := NewSpeechOpenAIToDashScopeTranslator("")
+		_, _, err := tr.RequestBody(nil, &openai.SpeechRequest{Model: "m", Input: "x", Voice: "v"}, false)
+		require.NoError(t, err)
+		envelope := `{"output":{"audio":{"url":"http://dashscope-result-sgp.oss-ap-southeast-1.aliyuncs.com/xyz.wav"}}}`
+		_, body, _, _, err := tr.ResponseBody(nil, strings.NewReader(envelope), true, nil)
+		require.NoError(t, err)
+		require.Equal(t, []byte("audio"), body)
 	})
 
 	t.Run("rejects non-aliyuncs.com host", func(t *testing.T) {

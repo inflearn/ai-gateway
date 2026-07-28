@@ -22,6 +22,7 @@ import (
 
 	"github.com/envoyproxy/ai-gateway/internal/apischema/anthropic"
 	cohereschema "github.com/envoyproxy/ai-gateway/internal/apischema/cohere"
+	dashscopeschema "github.com/envoyproxy/ai-gateway/internal/apischema/dashscope"
 	gcpschema "github.com/envoyproxy/ai-gateway/internal/apischema/gcp"
 	"github.com/envoyproxy/ai-gateway/internal/apischema/openai"
 	"github.com/envoyproxy/ai-gateway/internal/apischema/openai/tokenize"
@@ -136,6 +137,13 @@ type (
 	// Used for explicit context cache CRUD (POST/GET/PATCH/DELETE). The request body is parsed
 	// best-effort: POST/PATCH carry a CachedContentRequest, GET/DELETE carry no body.
 	GeminiCachedContentsEndpointSpec struct{}
+	// DashScopeVoiceEnrollmentEndpointSpec implements EndpointSpec for Alibaba DashScope's
+	// voice-cloning management endpoint (POST /api/v1/services/audio/tts/customization). This
+	// is a fork-only, non-OpenAI native endpoint; a single URL hosts five actions
+	// (create_voice, list_voice, query_voice, update_voice, delete_voice) chosen via
+	// input.action. The gateway forwards the body unchanged; only body.model is parsed so route
+	// matching can key off x-ai-eg-model=voice-enrollment.
+	DashScopeVoiceEnrollmentEndpointSpec struct{}
 )
 
 var errMultipartNotSupported = fmt.Errorf("%w: multipart body not supported for this endpoint", internalapi.ErrMalformedRequest)
@@ -767,6 +775,46 @@ func (GeminiCachedContentsEndpointSpec) GetTranslator(schema filterapi.Versioned
 // RedactSensitiveInfoFromRequest implements [EndpointSpec.RedactSensitiveInfoFromRequest].
 // Cached content is developer-supplied prompt material; not redacted for debug logs.
 func (GeminiCachedContentsEndpointSpec) RedactSensitiveInfoFromRequest(req *gcpschema.CachedContentRequest) (redactedReq *gcpschema.CachedContentRequest, err error) {
+	return req, nil
+}
+
+// ParseBody implements [Spec.ParseBody] for DashScope voice-enrollment. Only body.model and
+// body.input.action are pulled out (used for x-ai-eg-model routing and metrics tagging); the
+// rest of the payload varies per action and flows through as raw JSON.
+func (DashScopeVoiceEnrollmentEndpointSpec) ParseBody(
+	body []byte,
+	_ bool,
+) (internalapi.OriginalModel, *dashscopeschema.VoiceEnrollmentRequest, bool, []byte, error) {
+	var req dashscopeschema.VoiceEnrollmentRequest
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &req); err != nil {
+			return "", nil, false, nil, fmt.Errorf("%w: failed to parse JSON for voice enrollment: %w", internalapi.ErrMalformedRequest, err)
+		}
+	}
+	// voice-enrollment is never streamed.
+	return req.Model, &req, false, nil, nil
+}
+
+// ParseMultipartBody implements [Spec.ParseMultipartBody]. voice-enrollment is JSON-only.
+func (DashScopeVoiceEnrollmentEndpointSpec) ParseMultipartBody([]byte, string, bool) (internalapi.OriginalModel, *dashscopeschema.VoiceEnrollmentRequest, bool, []byte, error) {
+	return "", nil, false, nil, errMultipartNotSupported
+}
+
+// GetTranslator implements [EndpointSpec.GetTranslator]. Only AlibabaDashScope is supported;
+// there is no OpenAI-shaped counterpart for voice-cloning management, so this is fork-only.
+func (DashScopeVoiceEnrollmentEndpointSpec) GetTranslator(schema filterapi.VersionedAPISchema, _ string) (translator.DashScopeVoiceEnrollmentTranslator, error) {
+	switch schema.Name {
+	case filterapi.APISchemaAlibabaDashScope:
+		return translator.NewDashScopeVoiceEnrollmentTranslator(), nil
+	default:
+		return nil, fmt.Errorf("unsupported API schema for voice enrollment: backend=%s", schema)
+	}
+}
+
+// RedactSensitiveInfoFromRequest implements [EndpointSpec.RedactSensitiveInfoFromRequest].
+// voice-enrollment carries only opaque control fields (voice_id, prefix, action, remote audio
+// URL); nothing needs redaction for debug logs.
+func (DashScopeVoiceEnrollmentEndpointSpec) RedactSensitiveInfoFromRequest(req *dashscopeschema.VoiceEnrollmentRequest) (redactedReq *dashscopeschema.VoiceEnrollmentRequest, err error) {
 	return req, nil
 }
 

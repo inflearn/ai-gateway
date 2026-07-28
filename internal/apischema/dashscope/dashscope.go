@@ -62,6 +62,34 @@ type SpeechOutput struct {
 	Audio SpeechOutputAudio `json:"audio"`
 }
 
+// VoiceEnrollmentRequest is the request body for POST /api/v1/services/audio/tts/customization —
+// the DashScope voice-cloning management endpoint. A single URL hosts all five actions
+// (create_voice, list_voice, query_voice, update_voice, delete_voice); which one is executed
+// is decided by `input.action` in the body.
+//
+// The translator only needs `model` (routing) and `input.action` (observability/metrics); every
+// other field flows through as raw JSON. Callers speak DashScope's native schema — this
+// endpoint has no OpenAI counterpart to translate against.
+//
+// https://www.alibabacloud.com/help/en/model-studio/voice-clone-design-http-api
+type VoiceEnrollmentRequest struct {
+	// Model is always "voice-enrollment" for this endpoint; kept in the parsed request so the
+	// gateway can populate x-ai-eg-model for route matching.
+	Model string `json:"model"`
+	// Input carries the per-action payload. Only `action` is inspected here for logging /
+	// metrics tagging; the remaining fields (target_model, prefix, url, voice_id, …) are left
+	// to flow through as raw JSON.
+	Input VoiceEnrollmentInput `json:"input"`
+}
+
+// VoiceEnrollmentInput mirrors the `input` object of a voice-enrollment request. Only the
+// action tag is modelled — everything else is per-action noise that the gateway forwards
+// unchanged.
+type VoiceEnrollmentInput struct {
+	// Action selects the operation: create_voice | list_voice | query_voice | update_voice | delete_voice.
+	Action string `json:"action"`
+}
+
 // SpeechOutputAudio is the audio pointer within a DashScope response.
 //
 // Note: DashScope's non-streaming reply also carries an `expires_at` field encoded as a Unix

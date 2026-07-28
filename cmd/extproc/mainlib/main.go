@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	dashscopeschema "github.com/envoyproxy/ai-gateway/internal/apischema/dashscope"
 	gcpschema "github.com/envoyproxy/ai-gateway/internal/apischema/gcp"
 	"github.com/envoyproxy/ai-gateway/internal/apischema/openai"
 	"github.com/envoyproxy/ai-gateway/internal/endpointspec"
@@ -379,6 +380,20 @@ func Main(ctx context.Context, args []string, stderr io.Writer) (err error) {
 		path.Join(flags.rootPrefix, endpointPrefixes.Gemini, "/v1/projects/"),
 		geminiFactory,
 		extractGeminiPathInfo,
+	)
+
+	// Alibaba DashScope voice-enrollment (Qwen-TTS voice cloning management). Fork-only, non-OpenAI
+	// native endpoint. A single URL hosts create_voice / list_voice / query_voice / update_voice /
+	// delete_voice via `input.action`. Body flows through the translator unchanged; only x-ai-eg-model
+	// is populated from body.model for route matching.
+	voiceEnrollmentMetricsFactory := metrics.NewMetricsFactory(meter, metricsRequestHeaderAttributes, metrics.GenAIOperationSpeech)
+	server.Register(
+		path.Join(flags.rootPrefix, "/api/v1/services/audio/tts/customization"),
+		extproc.NewFactory(
+			voiceEnrollmentMetricsFactory,
+			tracingapi.NoopTracer[dashscopeschema.VoiceEnrollmentRequest, struct{}, struct{}]{},
+			endpointspec.DashScopeVoiceEnrollmentEndpointSpec{},
+		),
 	)
 
 	// Gemini cachedContents API for explicit context caching (POST/GET/PATCH/DELETE).

@@ -15,7 +15,7 @@ package v1alpha1
 type VersionedAPISchema struct {
 	// Name is the name of the API schema of the AIGatewayRoute or AIServiceBackend.
 	//
-	// +kubebuilder:validation:Enum=OpenAI;Cohere;AWSBedrock;AzureOpenAI;GCPVertexAI;GCPAnthropic;Anthropic;AWSAnthropic;AlibabaDashScope
+	// +kubebuilder:validation:Enum=OpenAI;Cohere;AWSBedrock;AzureOpenAI;GCPVertexAI;GCPAnthropic;Anthropic;AWSAnthropic;AlibabaDashScope;AlibabaCosyVoice
 	Name APISchema `json:"name"`
 
 	// Version is the version of the API schema.
@@ -94,8 +94,20 @@ const (
 	// Alibaba's OpenAI-compatible mode (/compatible-mode/v1) does not expose audio/speech, so DashScope
 	// native is required for TTS models. Use APISchemaOpenAI (with prefix=/compatible-mode/v1) for chat.
 	//
+	// Covers models: qwen3-tts-flash, qwen3-tts-instruct-flash, qwen-tts.
+	//
 	// https://www.alibabacloud.com/help/en/model-studio/qwen-tts-api
 	APISchemaAlibabaDashScope APISchema = "AlibabaDashScope"
+	// APISchemaAlibabaCosyVoice is the schema for Alibaba Cloud Model Studio's CosyVoice TTS HTTP
+	// endpoint at /api/v1/services/audio/tts/SpeechSynthesizer. This is a separate URL from the
+	// Qwen-TTS endpoint and supports mp3/wav/pcm/opus output, selectable sample rate, and speech
+	// rate/pitch controls that Qwen-TTS lacks.
+	//
+	// Covers models: qwen-audio-3.0-tts-plus / qwen-audio-3.0-tts-flash, cosyvoice-v3.5-plus /
+	// cosyvoice-v3.5-flash, cosyvoice-v3-plus / cosyvoice-v3-flash, cosyvoice-v2.
+	//
+	// https://help.aliyun.com/en/model-studio/cosyvoice-tts-http-api
+	APISchemaAlibabaCosyVoice APISchema = "AlibabaCosyVoice"
 )
 
 const (

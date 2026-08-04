@@ -67,6 +67,58 @@ func TestSpeechOpenAIToDashScope_RequestBody(t *testing.T) {
 		_, _, err := tr.RequestBody(nil, nil, false)
 		require.Error(t, err)
 	})
+
+	t.Run("Accept header forced to application/json (DashScope rejects octet-stream)", func(t *testing.T) {
+		tr := NewSpeechOpenAIToDashScopeTranslator("")
+		hm, _, err := tr.RequestBody(nil, &openai.SpeechRequest{Model: "qwen3-tts-flash", Input: "x", Voice: "Cherry"}, false)
+		require.NoError(t, err)
+		var accept string
+		for _, h := range hm {
+			if h.Key() == "accept" {
+				accept = h.Value()
+			}
+		}
+		require.Equal(t, "application/json", accept)
+	})
+
+	t.Run("language_type derived from voice", func(t *testing.T) {
+		cases := map[string]string{
+			"Sohee":    "Korean",
+			"Ono Anna": "Japanese",
+			"Sonrisa":  "Spanish",
+			"Emilien":  "French",
+			"Cherry":   "Auto",
+			"Dylan":    "Auto", // dialect voices don't get a locale hint; Auto lets the model detect
+		}
+		for voice, wantLang := range cases {
+			t.Run(voice, func(t *testing.T) {
+				tr := NewSpeechOpenAIToDashScopeTranslator("")
+				_, body, err := tr.RequestBody(nil, &openai.SpeechRequest{Model: "qwen3-tts-flash", Input: "안녕", Voice: voice}, false)
+				require.NoError(t, err)
+
+				var out map[string]any
+				require.NoError(t, json.Unmarshal(body, &out))
+				in := out["input"].(map[string]any)
+				require.Equal(t, wantLang, in["language_type"])
+			})
+		}
+	})
+
+	t.Run("instructions forwarded when supplied", func(t *testing.T) {
+		instr := "빠르게 낭독"
+		tr := NewSpeechOpenAIToDashScopeTranslator("")
+		_, body, err := tr.RequestBody(nil, &openai.SpeechRequest{
+			Model:        "qwen3-tts-instruct-flash",
+			Input:        "안녕",
+			Voice:        "Cherry",
+			Instructions: &instr,
+		}, false)
+		require.NoError(t, err)
+
+		var out map[string]any
+		require.NoError(t, json.Unmarshal(body, &out))
+		require.Equal(t, "빠르게 낭독", out["input"].(map[string]any)["instructions"])
+	})
 }
 
 func TestSpeechOpenAIToDashScope_ResponseHeaders(t *testing.T) {

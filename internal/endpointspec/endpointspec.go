@@ -853,6 +853,8 @@ func (SpeechEndpointSpec) GetTranslator(
 		), nil
 	case filterapi.APISchemaAlibabaDashScope:
 		return translator.NewSpeechOpenAIToDashScopeTranslator(modelNameOverride), nil
+	case filterapi.APISchemaAlibabaCosyVoice:
+		return translator.NewSpeechOpenAIToCosyVoiceTranslator(modelNameOverride), nil
 	default:
 		return nil, fmt.Errorf("unsupported API schema for speech: backend=%s", schema)
 	}

@@ -32,8 +32,12 @@ type SpeechInput struct {
 	Text string `json:"text"`
 	// Voice selects the timbre (e.g. "Cherry", "Ethan"). Required.
 	Voice string `json:"voice"`
-	// LanguageType is an optional locale hint ("Chinese", "English", "Auto"). Defaults to Auto.
+	// LanguageType is an optional locale hint. Valid: Auto, Chinese, English, German, Italian,
+	// Portuguese, Spanish, Japanese, Korean, French, Russian. Defaults to Auto server-side.
 	LanguageType string `json:"language_type,omitempty"`
+	// Instructions is a natural-language behaviour hint, ≤ 1600 tokens.
+	// Only qwen3-tts-instruct-flash actually consumes this; other models ignore it.
+	Instructions string `json:"instructions,omitempty"`
 }
 
 // SpeechParameters is the `parameters` object of a DashScope Qwen-TTS request.
@@ -60,6 +64,42 @@ type SpeechResponse struct {
 type SpeechOutput struct {
 	// Audio holds the signed audio URL (and an unused base64 payload for non-streaming calls).
 	Audio SpeechOutputAudio `json:"audio"`
+}
+
+// CosyVoiceSpeechRequest is the request body for POST /api/v1/services/audio/tts/SpeechSynthesizer,
+// the CosyVoice / Qwen-Audio-TTS HTTP endpoint. This is a *different* URL from Qwen-TTS —
+// supports mp3/wav/pcm/opus output, selectable sample rate, and speech rate/pitch controls.
+//
+// https://help.aliyun.com/en/model-studio/cosyvoice-tts-http-api
+type CosyVoiceSpeechRequest struct {
+	// Model — e.g. qwen-audio-3.0-tts-flash, cosyvoice-v3-flash, cosyvoice-v2.
+	Model string `json:"model"`
+	// Input carries the text/voice/format payload.
+	Input CosyVoiceSpeechInput `json:"input"`
+}
+
+// CosyVoiceSpeechInput is the `input` object of a CosyVoice / Qwen-Audio-TTS request.
+//
+// The gateway forwards a modest subset of the vendor's fields — only those we actually map from
+// OpenAI's SpeechRequest today. Add fields here as clients start needing them; the wire format
+// is stable per Alibaba's docs.
+type CosyVoiceSpeechInput struct {
+	// Text is the content to synthesise.
+	Text string `json:"text"`
+	// Voice selects the timbre (built-in name like "longxiaochun" or a cloned voice_id).
+	Voice string `json:"voice"`
+	// Format is the output audio format. Valid: "mp3" (default), "pcm", "wav", "opus".
+	Format string `json:"format,omitempty"`
+	// SampleRate in Hz. Valid: 8000, 16000, 22050 (default), 24000, 44100, 48000.
+	SampleRate int `json:"sample_rate,omitempty"`
+	// Rate is the speech rate. Range 0.5–2.0.
+	Rate float64 `json:"rate,omitempty"`
+	// Pitch. Range 0.5–2.0.
+	Pitch float64 `json:"pitch,omitempty"`
+	// LanguageHints is an optional array of language codes to bias pronunciation.
+	LanguageHints []string `json:"language_hints,omitempty"`
+	// Instruction is a natural-language behaviour hint (singular — Qwen-TTS uses `instructions`).
+	Instruction string `json:"instruction,omitempty"`
 }
 
 // VoiceEnrollmentRequest is the request body for POST /api/v1/services/audio/tts/customization —

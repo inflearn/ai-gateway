@@ -332,6 +332,7 @@ spec:
                     - Anthropic
                     - AWSAnthropic
                     - AlibabaDashScope
+                    - AlibabaCosyVoice
                     type: string
                   prefix:
                     description: |-
@@ -748,6 +749,7 @@ spec:
                     - Anthropic
                     - AWSAnthropic
                     - AlibabaDashScope
+                    - AlibabaCosyVoice
                     type: string
                   prefix:
                     description: |-

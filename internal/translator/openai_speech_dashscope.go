@@ -143,13 +143,22 @@ func (o *openAIToDashScopeSpeechTranslator) RequestBody(_ []byte, req *openai.Sp
 	}
 	o.requestModel = model
 
-	dsReq := dashscope.SpeechRequest{
-		Model: model,
-		Input: dashscope.SpeechInput{
-			Text:  req.Input,
-			Voice: req.Voice,
-		},
+	input := dashscope.SpeechInput{
+		Text:  req.Input,
+		Voice: req.Voice,
 	}
+	// language_type: Qwen-TTS accepts a discrete language enum; auto-derive it from the voice
+	// when the caller doesn't override, so language-specific voices (Sohee/Sonrisa/etc.)
+	// pronounce their native language without depending on the model's Auto detection heuristic.
+	input.LanguageType = qwenTTSLanguageForVoice(req.Voice)
+	// OpenAI SpeechRequest has an Instructions field even though it's only meaningful on
+	// qwen3-tts-instruct-flash. Passing it unconditionally is safe — the multimodal-generation
+	// endpoint ignores it for non-instruct models per Alibaba's docs.
+	if req.Instructions != nil && *req.Instructions != "" {
+		input.Instructions = *req.Instructions
+	}
+
+	dsReq := dashscope.SpeechRequest{Model: model, Input: input}
 	newBody, err = json.Marshal(dsReq)
 	if err != nil {
 		return nil, nil, fmt.Errorf("dashscope speech: marshal request: %w", err)
@@ -158,8 +167,41 @@ func (o *openAIToDashScopeSpeechTranslator) RequestBody(_ []byte, req *openai.Sp
 	newHeaders = []internalapi.Header{
 		{pathHeaderName, o.path},
 		{contentLengthHeaderName, strconv.Itoa(len(newBody))},
+		// OpenAI SDKs (Spring AI, python-openai, etc.) default Accept to
+		// application/octet-stream for /v1/audio/speech, but DashScope rejects that with
+		// "Accept type just supports application/json, application/*+json, ...". Force JSON so
+		// the SDK's request survives — the audio bytes still come back through ResponseBody.
+		{"accept", "application/json"},
 	}
 	return
+}
+
+// qwenTTSLanguageForVoice maps a DashScope built-in voice name to the language_type enum that
+// Qwen-TTS expects. Language-scoped voices (Sohee, Sonrisa, Emilien, …) get their native locale;
+// everything else stays on Auto so multilingual voices (Cherry, Ethan, …) keep detecting.
+//
+// Custom-cloned voice IDs (typically `custom_...` or `qwen-tts-vc-...`) fall through to Auto
+// because their language isn't inferable from the ID alone. Callers can still override by
+// pre-selecting language_type client-side; adding a bypass field on SpeechRequest is out of
+// scope until we see demand.
+func qwenTTSLanguageForVoice(voice string) string {
+	switch voice {
+	case "Sohee":
+		return "Korean"
+	case "Ono Anna":
+		return "Japanese"
+	case "Bodega", "Sonrisa":
+		return "Spanish"
+	case "Alek":
+		return "Russian"
+	case "Dolce":
+		return "Italian"
+	case "Lenn":
+		return "German"
+	case "Emilien":
+		return "French"
+	}
+	return "Auto"
 }
 
 // ResponseHeaders implements [OpenAISpeechTranslator.ResponseHeaders].

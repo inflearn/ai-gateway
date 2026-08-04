@@ -182,6 +182,11 @@ const (
 	// Used for TTS models (Qwen-TTS, Qwen3-TTS) that are not exposed through DashScope's
 	// OpenAI-compatible mode. See https://www.alibabacloud.com/help/en/model-studio/qwen-tts-api.
 	APISchemaAlibabaDashScope APISchemaName = "AlibabaDashScope"
+	// APISchemaAlibabaCosyVoice represents the Alibaba Model Studio CosyVoice TTS HTTP endpoint
+	// (/api/v1/services/audio/tts/SpeechSynthesizer). Distinct URL from Qwen-TTS and supports
+	// mp3/wav/pcm/opus, selectable sample rate, and rate/pitch controls.
+	// See https://help.aliyun.com/en/model-studio/cosyvoice-tts-http-api.
+	APISchemaAlibabaCosyVoice APISchemaName = "AlibabaCosyVoice"
 )
 
 // RouteRuleName is the name of the route rule.

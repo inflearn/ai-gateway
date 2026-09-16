@@ -382,6 +382,8 @@ func (ImageEditsEndpointSpec) GetTranslator(schema filterapi.VersionedAPISchema,
 	switch schema.Name {
 	case filterapi.APISchemaOpenAI:
 		return translator.NewImageEditsOpenAIToOpenAITranslator(schema.OpenAIPrefix(), modelNameOverride), nil
+	case filterapi.APISchemaGCPVertexAI:
+		return translator.NewImageEditsOpenAIToGCPVertexAITranslator(modelNameOverride), nil
 	default:
 		return nil, fmt.Errorf("unsupported API schema for image edits: backend=%s", schema)
 	}

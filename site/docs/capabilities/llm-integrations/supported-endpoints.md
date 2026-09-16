@@ -233,6 +233,10 @@ GCP VertexAI has no dedicated image endpoint: requests are translated to `genera
 `IMAGE` among the response modalities. Images always come back as `b64_json` (Gemini returns inline
 data, never a URL), `size` is mapped to the closest Gemini aspect ratio, `quality` selects the image
 resolution (`low`/`medium`/`high` → `1K`/`2K`/`4K`), and streaming is not supported.
+
+The same applies to `POST /v1/images/edits`: the uploaded images become `inlineData` parts ahead of
+the prompt in a `generateContent` call. `mask` is rejected rather than ignored, because Gemini has no
+masked-edit primitive — describe the region to change in the prompt instead.
 :::
 
 **Example:**

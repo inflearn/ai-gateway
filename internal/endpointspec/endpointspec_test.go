@@ -297,6 +297,9 @@ func TestImageEditsEndpointSpec_GetTranslator(t *testing.T) {
 	_, err := spec.GetTranslator(filterapi.VersionedAPISchema{Name: filterapi.APISchemaOpenAI}, "override")
 	require.NoError(t, err)
 
+	_, err = spec.GetTranslator(filterapi.VersionedAPISchema{Name: filterapi.APISchemaGCPVertexAI}, "override")
+	require.NoError(t, err)
+
 	_, err = spec.GetTranslator(filterapi.VersionedAPISchema{Name: filterapi.APISchemaAWSBedrock}, "override")
 	require.ErrorContains(t, err, "unsupported API schema for image edits")
 }

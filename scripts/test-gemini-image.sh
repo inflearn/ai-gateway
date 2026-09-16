@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Smoke-test Gemini image models through the OpenAI /v1/images/generations endpoint.
+# Smoke-test Gemini image models through the OpenAI /v1/images/generations and /v1/images/edits
+# endpoints. Each model generates an image, then that image is fed back in for an edit.
 # The gateway translates the request to Vertex generateContent with IMAGE response modality and
 # converts the inline image data back into OpenAI's b64_json shape.
 #
@@ -9,7 +10,8 @@
 # Optional:
 #   GW       - gateway URL (default: https://ai-gateway.devinflab.com)
 #   MODELS   - comma-separated override list (default: gemini-3.1-flash-image)
-#   PROMPT   - prompt to send
+#   PROMPT   - generation prompt
+#   EDIT_PROMPT - prompt for the follow-up /v1/images/edits round
 #   SIZE     - OpenAI size, mapped to the closest Gemini aspect ratio (default: 1024x1024)
 #   QUALITY  - low|medium|high, selects 1K/2K/4K (default: unset, model default)
 #   OUTDIR   - where to write the decoded images (default: ./out/gemini-image)
@@ -22,6 +24,7 @@ set -uo pipefail   # NOTE: no -e — keep going after individual model failures.
 GW="${GW:-https://ai-gateway.devinflab.com}"
 TOKEN="${TOKEN:?TOKEN env var required (e.g. your.name@inflab.com)}"
 PROMPT="${PROMPT:-A watercolor painting of a cat sitting on a Seoul rooftop at sunrise.}"
+EDIT_PROMPT="${EDIT_PROMPT:-Make the sky a deep purple twilight, keep everything else unchanged.}"
 SIZE="${SIZE:-1024x1024}"
 OUTDIR="${OUTDIR:-./out/gemini-image}"
 
@@ -83,6 +86,34 @@ for model in "${TARGET_MODELS[@]}"; do
   jq -r '"  tokens: in=\(.usage.input_tokens // 0) out=\(.usage.output_tokens // 0) total=\(.usage.total_tokens // 0)"' <<< "$payload"
   revised=$(jq -r '.data[0].revised_prompt // empty' <<< "$payload")
   [[ -n "$revised" ]] && printf '  model note: %s\n' "$(cut -c1-120 <<< "$revised")"
+
+  # Round two: feed the generated image straight back into /v1/images/edits.
+  edit_resp=$(curl -sS -w '\n%{http_code}' -X POST "$GW/v1/images/edits" \
+    -H "Authorization: Bearer $TOKEN" \
+    -F "model=$model" \
+    -F "prompt=$EDIT_PROMPT" \
+    -F "image=@${file};type=image/${ext}")
+  edit_status=$(tail -n1 <<< "$edit_resp")
+  edit_payload=$(sed '$d' <<< "$edit_resp")
+
+  if [[ "$edit_status" != "200" ]]; then
+    bad "  edits: HTTP $edit_status"
+    jq -C . <<< "$edit_payload" 2>/dev/null || printf '  %s\n' "$edit_payload"
+    ((failures++))
+    continue
+  fi
+
+  edit_b64=$(jq -r '.data[0].b64_json // empty' <<< "$edit_payload")
+  if [[ -z "$edit_b64" ]]; then
+    bad "  edits: HTTP 200 but no image in response"
+    ((failures++))
+    continue
+  fi
+
+  edit_file="$OUTDIR/${model}.edited.${ext}"
+  base64 -d <<< "$edit_b64" > "$edit_file" 2>/dev/null || base64 -D <<< "$edit_b64" > "$edit_file"
+  ok "  edits: HTTP 200 — $edit_file ($(wc -c < "$edit_file" | tr -d ' ') bytes)"
+  jq -r '"  tokens: in=\(.usage.input_tokens // 0) out=\(.usage.output_tokens // 0) total=\(.usage.total_tokens // 0)"' <<< "$edit_payload"
 done
 
 echo

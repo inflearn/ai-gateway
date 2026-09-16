@@ -225,7 +225,15 @@ curl -H "Content-Type: application/json" \
 **Supported Providers:**
 
 - OpenAI
+- GCP VertexAI (Gemini image models, e.g. `gemini-3.1-flash-image`, with automatic translation)
 - Any OpenAI-compatible provider that supports image generations
+
+:::note
+GCP VertexAI has no dedicated image endpoint: requests are translated to `generateContent` with
+`IMAGE` among the response modalities. Images always come back as `b64_json` (Gemini returns inline
+data, never a URL), `size` is mapped to the closest Gemini aspect ratio, `quality` selects the image
+resolution (`low`/`medium`/`high` → `1K`/`2K`/`4K`), and streaming is not supported.
+:::
 
 **Example:**
 
